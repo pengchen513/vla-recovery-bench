@@ -16,6 +16,9 @@ export XDG_CACHE_HOME="$VLA_ROOT/cache"
 export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl
 export EGL_PLATFORM=surfaceless
+if [[ -d /usr/lib/x86_64-linux-gnu ]]; then
+  export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 if [[ -f /root/miniconda3/etc/profile.d/conda.sh ]]; then
   source /root/miniconda3/etc/profile.d/conda.sh
 fi

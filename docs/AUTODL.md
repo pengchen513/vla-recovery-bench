@@ -20,6 +20,15 @@ bash scripts/setup_autodl.sh
 The script creates the RoboCasa Conda environment and caches on the data disk.
 It downloads only the required kitchen assets, not the full demonstration set.
 
+The setup also configures headless EGL rendering. If importing `mujoco` fails with
+`eglQueryString`, install the Ubuntu EGL/GLVND runtime libraries before rerunning
+the setup:
+
+```bash
+apt-get update
+apt-get install -y libegl1 libgl1 libglvnd0 libopengl0
+```
+
 ## Acceptance test
 
 ```bash

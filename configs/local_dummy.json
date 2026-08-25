@@ -1,0 +1,34 @@
+{
+  "episodes": 20,
+  "horizon": 14,
+  "seed": 7,
+  "goal_progress": 8,
+  "faults": [
+    {
+      "fault_id": "object_shift",
+      "kind": "object_displacement",
+      "step": 3,
+      "phase": "after_step",
+      "parameters": {
+        "magnitude": 2
+      }
+    },
+    {
+      "fault_id": "actuator_pause",
+      "kind": "actuator_dropout",
+      "step": 6,
+      "phase": "before_action",
+      "parameters": {
+        "duration": 1
+      }
+    }
+  ],
+  "monitor": {
+    "minimum_progress_delta": 0.5,
+    "stagnation_patience": 1
+  },
+  "recovery": {
+    "max_retries": 4
+  }
+}
+

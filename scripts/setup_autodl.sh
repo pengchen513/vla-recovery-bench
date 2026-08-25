@@ -14,9 +14,15 @@ export HF_HOME="$VLA_ROOT/cache/huggingface"
 export TORCH_HOME="$VLA_ROOT/cache/torch"
 export XDG_CACHE_HOME="$VLA_ROOT/cache"
 export MUJOCO_GL=egl
+export PYOPENGL_PLATFORM=egl
+export EGL_PLATFORM=surfaceless
+if [[ -f /root/miniconda3/etc/profile.d/conda.sh ]]; then
+  source /root/miniconda3/etc/profile.d/conda.sh
+fi
 EOF
 
 source /root/miniconda3/etc/profile.d/conda.sh
+source "$VLA_ROOT/env.sh"
 if [[ ! -d "$VLA_ROOT/envs/robocasa" ]]; then
   conda create -p "$VLA_ROOT/envs/robocasa" -c conda-forge python=3.11 -y
 fi
@@ -34,8 +40,7 @@ fi
 python -m pip install -e "$VLA_ROOT/src/robocasa"
 python -m pip install -e "$REPO_ROOT[robocasa]"
 
-source "$VLA_ROOT/env.sh"
-python -m robocasa.scripts.setup_macros
+python "$VLA_ROOT/src/robosuite/robosuite/scripts/setup_macros.py"
 python -m robocasa.scripts.download_kitchen_assets
 
 python "$REPO_ROOT/scripts/write_setup_report.py" \

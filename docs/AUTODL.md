@@ -41,4 +41,3 @@ standard deviation.
 Code should be synchronized through Git. Large assets, checkpoints, and rollout
 outputs stay on `/root/autodl-tmp`. Important source changes and result summaries
 should also be backed up because an AutoDL local data disk is not redundant.
-

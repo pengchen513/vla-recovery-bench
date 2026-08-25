@@ -29,6 +29,11 @@ apt-get update
 apt-get install -y libegl1 libgl1 libglvnd0 libopengl0
 ```
 
+The setup downloads RoboCasa kitchen assets and verifies a representative XML
+asset before it reports success. If an existing installation fails with a missing
+`model.xml`, rerun the two macro scripts and the asset downloader in the active
+environment.
+
 ## Acceptance test
 
 ```bash

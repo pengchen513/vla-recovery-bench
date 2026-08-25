@@ -44,7 +44,14 @@ python -m pip install -e "$VLA_ROOT/src/robocasa"
 python -m pip install -e "$REPO_ROOT[robocasa]"
 
 python "$VLA_ROOT/src/robosuite/robosuite/scripts/setup_macros.py"
+python "$VLA_ROOT/src/robocasa/robocasa/scripts/setup_macros.py"
 python -m robocasa.scripts.download_kitchen_assets
+
+REQUIRED_ASSET="$VLA_ROOT/src/robocasa/robocasa/models/assets/objects/lightwheel/utensil_rack/UtensilRack014/model.xml"
+if [[ ! -f "$REQUIRED_ASSET" ]]; then
+  echo "FAIL: RoboCasa kitchen assets are incomplete; missing $REQUIRED_ASSET" >&2
+  exit 1
+fi
 
 python "$REPO_ROOT/scripts/write_setup_report.py" \
   --output "$REPO_ROOT/SETUP_REPORT.md" \

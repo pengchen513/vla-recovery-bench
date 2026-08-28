@@ -81,8 +81,9 @@ def main() -> int:
         "",
         "## Status",
         "",
-        "RoboCasa installation completed. Scientific policy evaluation remains blocked until a",
-        "RoboCasa-compatible frozen checkpoint reproduces its clean baseline.",
+        "RoboCasa installation and the audited frozen-policy integration are complete.",
+        "Scientific fault evaluation remains blocked until the v1.4 firewall, artifact,",
+        "identifiability-pilot, and randomized-branch gates pass.",
         "",
     ]
     output = Path(args.output)
@@ -93,4 +94,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

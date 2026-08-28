@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .artifacts import ensure_empty_output_dir, write_json_once
 from .dummy import (
     ConstantFrozenPolicy,
     DummyProgressEnvironment,
@@ -30,8 +31,7 @@ def run_dummy(config_path: str, output: str) -> int:
     config = _load_config(config_path)
     monitor_config = require_mapping(config.get("monitor", {}), "monitor")
     recovery_config = require_mapping(config.get("recovery", {}), "recovery")
-    output_dir = Path(output)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = ensure_empty_output_dir(output)
 
     with JsonlRecorder(output_dir / "events.jsonl") as recorder:
         runner = ExperimentRunner(
@@ -59,8 +59,7 @@ def run_dummy(config_path: str, output: str) -> int:
         results = runner.run()
         metrics = aggregate_episode_metrics(results)
 
-    metrics_path = output_dir / "metrics.json"
-    metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    metrics_path = write_json_once(output_dir / "metrics.json", metrics)
     print(json.dumps(metrics, indent=2, sort_keys=True))
     print(f"Events: {output_dir / 'events.jsonl'}")
     print(f"Metrics: {metrics_path}")

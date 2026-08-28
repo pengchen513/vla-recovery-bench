@@ -1,0 +1,259 @@
+{
+  "protocol_version": "1.3",
+  "status": "pre_registered_exploratory_gate",
+  "scientific_result": false,
+  "environment": {
+    "id": "robocasa/PickPlaceCounterToCabinet",
+    "split": "target",
+    "policy_manifest": "configs/policies/groot_n1_5_robocasa_atomic_seen_30p.json",
+    "horizon": 750,
+    "control_frequency_hz": 20,
+    "action_chunk_length": 16
+  },
+  "episode_count": 36,
+  "seed_block": {
+    "seeds": [500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511],
+    "scene_seed_id_format": "pilot-scene-{seed}",
+    "pair_id_format": "pilot-{seed}-{condition}",
+    "episodes_per_seed": 3,
+    "independence_unit": "scene_seed",
+    "derived_condition_ids": ["clean", "actuator_fault", "observation_fault"],
+    "derived_pair_id_format": "pilot-{seed}-{condition}"
+  },
+  "episode_plan": {
+    "rows_are_scene_seed_factors": true,
+    "derive_one_episode_per_condition_per_seed": true,
+    "clean_episode": "no_fault_and_no_observation_transform",
+    "actuator_episode": "use_actuator_variant_and_shared_onset_duration",
+    "observation_episode": "use_observation_variant_camera_and_shared_onset_duration",
+    "total_episodes": 36
+  },
+  "monitor_input_contract": {
+    "allowed": [
+      "previous_observation",
+      "current_observation",
+      "bounded_observation_history",
+      "requested_action_chunk",
+      "task_instruction"
+    ],
+    "forbidden": [
+      "reward",
+      "success",
+      "terminated",
+      "truncated",
+      "fault_schedule",
+      "fault_type",
+      "executed_action",
+      "mujoco_state"
+    ]
+  },
+  "episode_assignment": [
+    {
+      "seed": 500,
+      "scene_seed_id": "pilot-scene-500",
+      "pair_id": "pilot-500-actuator",
+      "condition": "actuator_fault",
+      "onset_step": 80,
+      "duration_steps": 4,
+      "actuator_variant": "arm_only",
+      "observation_variant": "partial_mask",
+      "observation_camera": "video.robot0_agentview_left"
+    },
+    {
+      "seed": 501,
+      "scene_seed_id": "pilot-scene-501",
+      "pair_id": "pilot-501-actuator",
+      "condition": "actuator_fault",
+      "onset_step": 80,
+      "duration_steps": 8,
+      "actuator_variant": "arm_only",
+      "observation_variant": "blur",
+      "observation_camera": "video.robot0_agentview_right"
+    },
+    {
+      "seed": 502,
+      "scene_seed_id": "pilot-scene-502",
+      "pair_id": "pilot-502-actuator",
+      "condition": "actuator_fault",
+      "onset_step": 80,
+      "duration_steps": 4,
+      "actuator_variant": "arm_only",
+      "observation_variant": "stale_frame",
+      "observation_camera": "video.robot0_eye_in_hand"
+    },
+    {
+      "seed": 503,
+      "scene_seed_id": "pilot-scene-503",
+      "pair_id": "pilot-503-actuator",
+      "condition": "actuator_fault",
+      "onset_step": 80,
+      "duration_steps": 8,
+      "actuator_variant": "arm_only",
+      "observation_variant": "color_shift",
+      "observation_camera": "video.robot0_agentview_left"
+    },
+    {
+      "seed": 504,
+      "scene_seed_id": "pilot-scene-504",
+      "pair_id": "pilot-504-actuator",
+      "condition": "actuator_fault",
+      "onset_step": 80,
+      "duration_steps": 4,
+      "actuator_variant": "arm_only",
+      "observation_variant": "partial_mask",
+      "observation_camera": "video.robot0_agentview_right"
+    },
+    {
+      "seed": 505,
+      "scene_seed_id": "pilot-scene-505",
+      "pair_id": "pilot-505-actuator",
+      "condition": "actuator_fault",
+      "onset_step": 80,
+      "duration_steps": 8,
+      "actuator_variant": "arm_only",
+      "observation_variant": "blur",
+      "observation_camera": "video.robot0_eye_in_hand"
+    },
+    {
+      "seed": 506,
+      "scene_seed_id": "pilot-scene-506",
+      "pair_id": "pilot-506-observation",
+      "condition": "observation_fault",
+      "onset_step": 240,
+      "duration_steps": 4,
+      "actuator_variant": "gripper_only",
+      "observation_variant": "stale_frame",
+      "observation_camera": "video.robot0_agentview_left"
+    },
+    {
+      "seed": 507,
+      "scene_seed_id": "pilot-scene-507",
+      "pair_id": "pilot-507-observation",
+      "condition": "observation_fault",
+      "onset_step": 240,
+      "duration_steps": 8,
+      "actuator_variant": "gripper_only",
+      "observation_variant": "stale_frame",
+      "observation_camera": "video.robot0_agentview_right"
+    },
+    {
+      "seed": 508,
+      "scene_seed_id": "pilot-scene-508",
+      "pair_id": "pilot-508-observation",
+      "condition": "observation_fault",
+      "onset_step": 240,
+      "duration_steps": 4,
+      "actuator_variant": "gripper_only",
+      "observation_variant": "stale_frame",
+      "observation_camera": "video.robot0_eye_in_hand"
+    },
+    {
+      "seed": 509,
+      "scene_seed_id": "pilot-scene-509",
+      "pair_id": "pilot-509-observation",
+      "condition": "observation_fault",
+      "onset_step": 240,
+      "duration_steps": 8,
+      "actuator_variant": "gripper_only",
+      "observation_variant": "color_shift",
+      "observation_camera": "video.robot0_agentview_left"
+    },
+    {
+      "seed": 510,
+      "scene_seed_id": "pilot-scene-510",
+      "pair_id": "pilot-510-observation",
+      "condition": "observation_fault",
+      "onset_step": 240,
+      "duration_steps": 4,
+      "actuator_variant": "gripper_only",
+      "observation_variant": "color_shift",
+      "observation_camera": "video.robot0_agentview_right"
+    },
+    {
+      "seed": 511,
+      "scene_seed_id": "pilot-scene-511",
+      "pair_id": "pilot-511-observation",
+      "condition": "observation_fault",
+      "onset_step": 240,
+      "duration_steps": 8,
+      "actuator_variant": "gripper_only",
+      "observation_variant": "color_shift",
+      "observation_camera": "video.robot0_eye_in_hand"
+    }
+  ],
+  "episode_templates": {
+    "clean": {
+      "mechanism": "none",
+      "scientific_role": "clean_false_alarm_calibration",
+      "fault": null
+    },
+    "actuator_fault": {
+      "mechanism": "actuator_fault",
+      "scientific_role": "hard_exposed_mechanism_diagnosis",
+      "fault_kind": "actuator_variant_pending_adapter",
+      "phase": "before_action",
+      "parameters": {
+        "duration_from_assignment": true,
+        "variant_from_assignment": true
+      }
+    },
+    "observation_fault": {
+      "mechanism": "observation_fault",
+      "scientific_role": "hard_exposed_mechanism_diagnosis",
+      "fault_kind": "observation_variant_pending_adapter",
+      "phase": "before_action",
+      "parameters": {
+        "duration_from_assignment": true,
+        "variant_from_assignment": true,
+        "camera_from_assignment": true
+      }
+    }
+  },
+  "factor_levels": {
+    "onset_step": [80, 240],
+    "duration_steps": [4, 8],
+    "actuator_variant": ["arm_only", "gripper_only"],
+    "observation_variant": ["partial_mask", "blur", "stale_frame", "color_shift"],
+    "observation_camera": [
+      "video.robot0_agentview_left",
+      "video.robot0_agentview_right",
+      "video.robot0_eye_in_hand"
+    ]
+  },
+  "diagnostic_conditions": [
+    {
+      "name": "all_zero_image",
+      "scientific_role": "injection_and_logging_check_only",
+      "included_in_primary_endpoint": false
+    },
+    {
+      "name": "all_channel_zero_action",
+      "scientific_role": "injection_and_logging_check_only",
+      "included_in_primary_endpoint": false
+    }
+  ],
+  "analysis": {
+    "primary_diagnosis": "binary_macro_f1_actuator_vs_observation_on_hard_exposed_windows",
+    "primary_recovery": "paired_intention_to_treat_delta_vs_fixed_retry",
+    "clean_excluded_from_primary_diagnosis": true,
+    "three_class_none_analysis": "exploratory_only",
+    "identifiability_reference_balanced_accuracy": 0.5,
+    "minimum_useful_balanced_accuracy_gain": 0.15,
+    "confidence_interval": "paired_bootstrap_95_percent",
+    "pilot_is_superiority_evidence": false,
+    "all_zero_conditions_are_primary_evidence": false
+  },
+  "implementation_gate": {
+    "hard_corruption_adapter_required": true,
+    "actuator_variant_adapter_required": true,
+    "schedule_factory_required": true,
+    "common_prefix_branch_required_for_causal_recovery": true,
+    "current_status": "blocked_until_runtime_and_artifact_checks_pass"
+  },
+  "outputs": {
+    "root": "/home/pc/VLA/outputs/identifiability_pilot_v1_3",
+    "run_manifest": "run_manifest.json",
+    "episodes": "episodes.jsonl",
+    "metrics": "metrics.json"
+  }
+}

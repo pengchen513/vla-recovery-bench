@@ -30,6 +30,18 @@ The dummy experiment is not a robotics result. It verifies scheduling, logging,
 fault matching, recovery decisions, and metric aggregation without CUDA or
 MuJoCo.
 
+Formal monitor-data shards are checked read-only before training:
+
+```bash
+python scripts/validate_monitor_shards.py \
+  --partition train \
+  --shard /path/to/train-shard-* \
+  --json
+```
+
+The command passes only for an exact, disjoint, checksum-sealed partition. It
+does not load a VLA checkpoint or start RoboCasa.
+
 ## AutoDL smoke test
 
 Keep all large files on `/root/autodl-tmp`. Follow [docs/AUTODL.md](docs/AUTODL.md),
@@ -54,4 +66,3 @@ match the target RoboCasa embodiment.
 
 See [docs/EXPERIMENT_DESIGN.md](docs/EXPERIMENT_DESIGN.md) for the current protocol
 and [docs/SMOLVLA_INTEGRATION.md](docs/SMOLVLA_INTEGRATION.md) for the policy gate.
-

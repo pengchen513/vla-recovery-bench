@@ -30,7 +30,11 @@ class JsonlRecorder:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._stream = self.path.open("w", encoding="utf-8")
+        # Scientific artifacts are immutable. Refuse an existing non-empty
+        # file; an empty placeholder is safe to claim and write atomically.
+        if self.path.exists() and self.path.stat().st_size > 0:
+            raise FileExistsError(f"refusing to overwrite non-empty artifact: {self.path}")
+        self._stream = self.path.open("a", encoding="utf-8")
 
     def record(self, event_type: str, **payload: Any) -> None:
         event = {"event_type": event_type, **payload}

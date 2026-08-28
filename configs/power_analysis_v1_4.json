@@ -1,0 +1,54 @@
+{
+  "protocol_version": "1.4",
+  "status": "inputs_frozen_before_confirmatory_collection",
+  "estimand": "episode_level_intention_to_treat_recovery_difference_selector_minus_fixed_retry",
+  "outcome": "binary_task_success",
+  "design": "common_prefix_when_available_else_episode_randomized_itt",
+  "primary_endpoint": "delta_recovery_at_componentwise_cost_budget",
+  "alpha_two_sided": 0.05,
+  "target_power": 0.8,
+  "minimum_detectable_absolute_effect": 0.2,
+  "baseline_recovery_rate": 0.5,
+  "within_pair_correlation": 0.3,
+  "invalid_run_rate": 0.05,
+  "attrition_allowance": 0.1,
+  "resampling_unit": "independent_scene_seed_or_randomized_branch",
+  "analysis": {
+    "primary_test": "paired_randomization_or_exact_mcnemar",
+    "interval": "cluster_bootstrap_95_percent_or_randomization_interval",
+    "secondary_model": "pre_specified_mixed_effects_logistic_with_scene_seed_random_intercept",
+    "multiple_comparison_policy": "one_primary_recovery_endpoint; secondary_endpoints_exploratory",
+    "detection_delay": "right_censored_at_horizon; missed_faults_reported_separately"
+  },
+  "sample_size_rule": {
+    "method": "deterministic_monte_carlo_required",
+    "replicates": 10000,
+    "candidate_independent_units": [
+      48,
+      60,
+      72,
+      84,
+      96,
+      108,
+      120,
+      144,
+      168,
+      192,
+      240
+    ],
+    "select": "smallest candidate whose simulated rejection probability >= target_power under every declared sensitivity scenario after invalid-run and attrition inflation",
+    "seed": 14042026,
+    "sensitivity_scenarios": [
+      {"baseline_recovery_rate": 0.4, "within_pair_correlation": 0.0, "effect": 0.2},
+      {"baseline_recovery_rate": 0.5, "within_pair_correlation": 0.3, "effect": 0.2},
+      {"baseline_recovery_rate": 0.6, "within_pair_correlation": 0.6, "effect": 0.2},
+      {"baseline_recovery_rate": 0.5, "within_pair_correlation": 0.3, "effect": 0.15}
+    ]
+  },
+  "lock_rule": "pilot estimates may update baseline and correlation only before confirmatory data; alpha, target power, endpoint, sensitivity grid, simulation seed, and test rule are immutable",
+  "generated_result": {
+    "required": true,
+    "path": "/home/pc/VLA/outputs/power_analysis_v1_4.json",
+    "must_be_immutable_before_confirmatory_collection": true
+  }
+}

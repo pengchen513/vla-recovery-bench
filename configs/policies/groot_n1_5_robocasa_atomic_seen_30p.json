@@ -1,0 +1,125 @@
+{
+  "policy_name": "groot_n1_5_robocasa_atomic_seen_30p",
+  "official_source": "https://huggingface.co/robocasa/robocasa365_checkpoints",
+  "official_revision": "c484448aba1a9b60a04c9b0ca117241518ea69f3",
+  "official_path": "gr00t_n1-5/target_fraction/atomic_seen_30p",
+  "groot_source": "https://github.com/robocasa-benchmark/Isaac-GR00T",
+  "groot_commit": "9d7d7a9eb7ad30bd8ce30448d9ab53a918b45b10",
+  "checkpoint_path": "/home/pc/VLA/checkpoints/groot_atomic_seen_30p/gr00t_n1-5/target_fraction/atomic_seen_30p",
+  "checkpoint_files": [
+    {
+      "path": "model-00001-of-00002.safetensors",
+      "size": 4999367032,
+      "sha256": "8c4623d66b379039461f8561aab72296c172e93963190ca68f834e5d2a5914d8"
+    },
+    {
+      "path": "model-00002-of-00002.safetensors",
+      "size": 2586705312,
+      "sha256": "1a28e35ba116404d24d35f6060cc6ba55867e83c68775cda42e9b92aa56fc1c8"
+    }
+  ],
+  "checkpoint_sha256": "fd92aa25425352d5d2f201a49f2186c28a661fdc9c25f494ddf8c91b232d3e52",
+  "embodiment": "PandaOmron",
+  "control_frequency_hz": 20,
+  "camera_keys": [
+    "video.robot0_agentview_left",
+    "video.robot0_agentview_right",
+    "video.robot0_eye_in_hand"
+  ],
+  "image_shape": [256, 256, 3],
+  "image_preprocessing": {
+    "source_shape": [256, 256, 3],
+    "eval_center_crop_fraction": 0.95,
+    "resize": [224, 224],
+    "interpolation": "bilinear",
+    "color_jitter": false
+  },
+  "proprioception_keys": [
+    "state.end_effector_position_relative",
+    "state.end_effector_rotation_relative",
+    "state.gripper_qpos",
+    "state.base_position",
+    "state.base_rotation"
+  ],
+  "state_normalization": {
+    "continuous": "min_max",
+    "rotation_targets": {
+      "state.end_effector_rotation_relative": "rotation_6d",
+      "state.base_rotation": "rotation_6d"
+    }
+  },
+  "action_space": {
+    "type": "gymnasium.spaces.dict.Dict",
+    "shape": null,
+    "dtype": null,
+    "spaces": {
+      "action.base_motion": {
+        "type": "gymnasium.spaces.box.Box",
+        "shape": [4],
+        "dtype": "float32",
+        "low": [-1, -1, -1, -1],
+        "high": [1, 1, 1, 1]
+      },
+      "action.control_mode": {
+        "type": "gymnasium.spaces.box.Box",
+        "shape": [1],
+        "dtype": "float32",
+        "low": [-1],
+        "high": [1]
+      },
+      "action.end_effector_position": {
+        "type": "gymnasium.spaces.box.Box",
+        "shape": [3],
+        "dtype": "float32",
+        "low": [-1, -1, -1],
+        "high": [1, 1, 1]
+      },
+      "action.end_effector_rotation": {
+        "type": "gymnasium.spaces.box.Box",
+        "shape": [3],
+        "dtype": "float32",
+        "low": [-1, -1, -1],
+        "high": [1, 1, 1]
+      },
+      "action.gripper_close": {
+        "type": "gymnasium.spaces.box.Box",
+        "shape": [1],
+        "dtype": "float32",
+        "low": [-1],
+        "high": [1]
+      }
+    }
+  },
+  "action_keys": [
+    "action.end_effector_position",
+    "action.end_effector_rotation",
+    "action.gripper_close",
+    "action.base_motion",
+    "action.control_mode"
+  ],
+  "action_dim": 12,
+  "model_action_dim": 32,
+  "action_horizon": 16,
+  "action_normalization": {
+    "continuous": "min_max",
+    "binary": ["action.gripper_close", "action.control_mode"],
+    "model_padding": "official transform pads native 12 dimensions to 32 and removes only documented padding"
+  },
+  "action_saturation": {
+    "enabled": true,
+    "bounds_source": "probed Gymnasium RoboCasa action_space low/high",
+    "reason": "official GR00T evaluator passes generated actions to RoboCasa, whose robosuite controllers saturate normalized inputs; the adapter makes that boundary explicit and records every saturated value"
+  },
+  "control_mode": "OSC_POSE delta base-frame arm; joint-velocity base; joint-position torso",
+  "prompt_key": "annotation.human.task_description",
+  "published_clean_baseline": {
+    "source": "official checkpoint README.md and eval_results.json",
+    "task": "PickPlaceCounterToCabinet",
+    "published_task_alias": "PnPCounterToCabinet",
+    "num_episodes": 30,
+    "success_rate": 0.6,
+    "seed_set": null,
+    "split": "held-out test"
+  },
+  "no_faults": true
+}

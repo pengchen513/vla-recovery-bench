@@ -1,0 +1,181 @@
+{
+  "protocol_version": "1.4",
+  "monitor_protocol_version": "1.0",
+  "status": "pre_registered_training_and_calibration_protocol",
+  "scientific_result": false,
+  "purpose": "train_and_calibrate_a_black_box_fault_conditioned_monitor_before_recovery",
+  "environment": {
+    "id": "robocasa/PickPlaceCounterToCabinet",
+    "split": "target",
+    "embodiment": "PandaOmron",
+    "cameras": [
+      "video.robot0_agentview_left",
+      "video.robot0_agentview_right",
+      "video.robot0_eye_in_hand"
+    ],
+    "horizon": 750,
+    "action_chunk_length": 16
+  },
+  "policy": {
+    "name": "groot_n1_5_robocasa_atomic_seen_30p",
+    "checkpoint_sha256": "fd92aa25425352d5d2f201a49f2186c28a661fdc9c25f494ddf8c91b232d3e52",
+    "frozen": true,
+    "training_or_finetuning": false
+  },
+  "information_boundary": {
+    "allowed_inputs": [
+      "previous_observation",
+      "current_observation",
+      "requested_action_chunk",
+      "bounded_requested_action_history",
+      "task_instruction",
+      "declared_wall_clock_latency"
+    ],
+    "forbidden_inputs": [
+      "fault_type",
+      "fault_schedule",
+      "fault_onset",
+      "fault_duration",
+      "executed_action",
+      "reward",
+      "success",
+      "terminated",
+      "truncated",
+      "info",
+      "mujoco_state",
+      "final_test_labels"
+    ],
+    "raw_observation_fields_must_be_preserved": true,
+    "monitor_does_not_modify_policy": true
+  },
+  "splits": {
+    "unit": "independent_scene_seed",
+    "pilot_seeds": [500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511],
+    "train_scene_seeds": [600, 601, 602, 603, 604, 605, 606, 607, 608, 609, 610, 611, 612, 613, 614, 615, 616, 617, 618, 619, 620, 621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634, 635, 636, 637, 638, 639, 640, 641, 642, 643, 644, 645, 646, 647, 648, 649, 650, 651, 652, 653, 654, 655, 656, 657, 658, 659, 660, 661, 662, 663, 664, 665, 666, 667, 668, 669, 670, 671, 672, 673, 674, 675, 676, 677, 678, 679, 680, 681, 682, 683, 684, 685, 686, 687, 688, 689, 690, 691, 692, 693, 694, 695, 696, 697, 698, 699],
+    "calibration_scene_seeds": [700, 701, 702, 703, 704, 705, 706, 707, 708, 709, 710, 711, 712, 713, 714, 715, 716, 717, 718, 719, 720, 721, 722, 723, 724, 725, 726, 727, 728, 729, 730, 731, 732, 733, 734, 735, 736, 737, 738, 739, 740, 741, 742, 743, 744, 745, 746, 747, 748, 749],
+    "validation_scene_seeds": [800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 810, 811, 812, 813, 814, 815, 816, 817, 818, 819, 820, 821, 822, 823, 824, 825, 826, 827, 828, 829, 830, 831, 832, 833, 834, 835, 836, 837, 838, 839, 840, 841, 842, 843, 844, 845, 846, 847, 848, 849],
+    "final_test_scene_seeds": [900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915, 916, 917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929]
+  },
+  "fault_sampling": {
+    "mechanisms": ["clean", "actuator_fault", "observation_fault"],
+    "clean_training_fraction": 0.5,
+    "fault_training_fraction_equal_between_mechanisms": true,
+    "onset_steps": [80, 160, 240, 320, 400],
+    "duration_steps": [4, 8, 16],
+    "actuator_variants": ["arm_only", "base_only", "gripper_only", "hold_last", "intermittent"],
+    "observation_variants": ["partial_mask", "blur", "stale_frame", "color_shift"],
+    "camera_variants": [
+      "video.robot0_agentview_left",
+      "video.robot0_agentview_right",
+      "video.robot0_eye_in_hand",
+      "two_camera_correlated"
+    ],
+    "all_zero_shortcut_role": "diagnostic_only_not_training_or_primary_test",
+    "natural_failure_labels": false
+  },
+  "collection_design": {
+    "conditions_per_scene_seed": ["clean", "actuator_fault", "observation_fault"],
+    "paired_factor_row_across_fault_mechanisms": true,
+    "execution_order": "sha256(monitor_protocol_version|split|episode_id)",
+    "factor_assignment": "deterministic_marginally_balanced_sha256_permutation",
+    "camera_variant_map": {
+      "video.robot0_agentview_left": ["video.robot0_agentview_left"],
+      "video.robot0_agentview_right": ["video.robot0_agentview_right"],
+      "video.robot0_eye_in_hand": ["video.robot0_eye_in_hand"],
+      "two_camera_correlated": [
+        "video.robot0_agentview_left",
+        "video.robot0_agentview_right"
+      ]
+    },
+    "early_termination_before_exposure": "retain_as_not_exposed_attrition",
+    "sample_weighting": "clean_rows_weighted_to_0.5_then_equal_fault_mechanism_weight"
+  },
+  "storage": {
+    "raw_contract_validation": "exact_all_declared_fields_required",
+    "camera_representation": "deterministic_8x8_rgb_area_pool",
+    "camera_representation_is_model_input_not_raw_archive": true,
+    "state_representation": "all_declared_fields_concatenated_in_manifest_order",
+    "requested_action_representation": "complete_16x12_chunk_and_current_structured_action",
+    "instruction_representation": "lossless_utf8_bytes_up_to_256",
+    "monitor_inputs_artifact": "monitor_inputs.h5",
+    "offline_labels_artifact": "offline_labels.h5",
+    "privileged_audit_is_separate": true
+  },
+  "model": {
+    "name": "fault_conditioned_action_observation_monitor",
+    "track": "black_box",
+    "input_window_steps": 16,
+    "architecture": "temporal_encoder_plus_two_mechanism_heads_and_risk_head",
+    "mechanism_classes": ["none", "actuator_fault", "observation_fault"],
+    "risk_output": true,
+    "posterior_output": true,
+    "calibration_method": "split_conformal_or_declared_probability_calibration",
+    "random_seed": 14042026,
+    "no_policy_parameters": true
+  },
+  "training": {
+    "labels_allowed_during_training": ["episode_mechanism", "offline_exposure_window", "task_success"],
+    "labels_forbidden_during_online_inference": ["episode_mechanism", "offline_exposure_window", "task_success"],
+    "row_target_rule": "none_outside_exposure_otherwise_episode_mechanism",
+    "early_stopping_source": "validation_scene_seeds_only",
+    "hyperparameter_selection_source": "train_and_validation_only",
+    "final_test_access_before_lock": false,
+    "checkpoint_write_once": true,
+    "parameter_hash_before_after_policy": true
+  },
+  "formal_shard_integrity": {
+    "schema_version": "monitor-shard-integrity-v1",
+    "required_before_training": true,
+    "require_exact_partition_seed_coverage": true,
+    "require_three_conditions_per_seed": true,
+    "require_cross_shard_seed_disjointness": true,
+    "require_file_sha256": true,
+    "require_clean_repository": true,
+    "require_identical_provenance": true,
+    "require_full_horizon": true
+  },
+  "calibration": {
+    "source": "calibration_scene_seeds_only",
+    "clean_false_intervention_budget": {
+      "episode_rate_max": 0.05,
+      "per_1000_steps_report_required": true,
+      "componentwise_cost_limits_required": true
+    },
+    "threshold_lock_before_final_test": true,
+    "sequential_dependence_note_required": true
+  },
+  "primary_monitor_evaluation": {
+    "final_test_source": "final_test_scene_seeds_only",
+    "primary_operating_point": "calibration_locked_clean_budget",
+    "endpoints": [
+      "risk_early_warning_at_fixed_clean_budget",
+      "mechanism_macro_f1_on_hard_exposed_windows",
+      "exposure_window_detection_recall",
+      "clean_false_intervention_rate"
+    ],
+    "recovery_intervention": "disabled",
+    "common_prefix_branch": "not_required_for_monitor_only_phase"
+  },
+  "artifacts": {
+    "manifest": "run_manifest.json",
+    "dataset_index": "dataset_index.jsonl",
+    "monitor_inputs": "monitor_inputs.h5",
+    "offline_labels": "offline_labels.h5",
+    "monitor_checkpoint": "monitor.npz",
+    "monitor_sha256": "monitor.sha256",
+    "calibration": "calibration.json",
+    "metrics": "metrics.json",
+    "software_versions": "software_versions.json",
+    "policy_state_before_after": "policy_state.json",
+    "audit_stream": "audit_stream.jsonl",
+    "shard_integrity": "shard_integrity.json",
+    "validation": "artifact_validation.json"
+  },
+  "gates": {
+    "pilot_source_is_not_training_data": true,
+    "no_final_test_label_reuse": true,
+    "no_recovery_before_monitor_gate": true,
+    "monitor_gate_requires_clean_budget_and_held_out_metrics": true,
+    "diagnostic_probe_required_if_passive_not_identifiable": true
+  }
+}

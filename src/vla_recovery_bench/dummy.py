@@ -29,7 +29,6 @@ class DummyProgressEnvironment:
         return {
             "progress": self.progress,
             "goal_progress": self.goal_progress,
-            "dropout_steps": self.dropout_steps,
         }
 
     def reset(self, seed: int) -> Observation:
@@ -50,6 +49,7 @@ class DummyProgressEnvironment:
             terminated=success,
             truncated=False,
             info={"success": success},
+            executed_action=action,
         )
 
     def inject_fault(self, fault: FaultSpec) -> FaultApplication:

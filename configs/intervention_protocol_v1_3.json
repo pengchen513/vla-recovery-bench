@@ -1,0 +1,117 @@
+{
+  "protocol_version": "1.3",
+  "status": "design_only_pending_runtime_branch_checks",
+  "primary_comparison": {
+    "treatment": "selector",
+    "control": "fixed_retry",
+    "estimand": "paired_intention_to_treat_recovery_difference",
+    "outcome": "binary_task_success"
+  },
+  "assignment": {
+    "preferred_design": "common_prefix_branch",
+    "checkpoint_rule": "first_observation_after_offline_exposure_interval",
+    "monitor_cannot_receive_checkpoint_rule_inputs": true,
+    "randomization_seed": "sha256(pair_id || decision_step || protocol_version)",
+    "primary_arms": {
+      "selector": 0.5,
+      "fixed_retry": 0.5
+    },
+    "fallback_design": {
+      "when": "state_clone_or_deterministic_replay_unavailable",
+      "type": "episode_level_randomized_intention_to_treat",
+      "assignment_unit": "scene_seed_pair",
+      "randomization": "sha256(pair_id || protocol_version)",
+      "probability": {
+        "selector": 0.5,
+        "fixed_retry": 0.5
+      }
+    },
+    "ineligible_branch_rule": "discard branch only for predeclared contract failure; report attrition and never silently replace the seed"
+  },
+  "interventions": {
+    "continue": {
+      "policy_reset": false,
+      "max_extra_environment_steps": 0,
+      "fault_type_access": false
+    },
+    "fixed_retry": {
+      "max_invocations_per_episode": 1,
+      "policy_reset": true,
+      "action_chunk_reset": true,
+      "reissue_current_chunk": false,
+      "fault_type_access": false
+    },
+    "fixed_requery": {
+      "max_invocations_per_episode": 1,
+      "policy_reset": true,
+      "action_chunk_reset": true,
+      "reissue_current_chunk": false,
+      "fault_type_access": false,
+      "role": "secondary_baseline"
+    },
+    "diagnostic_probe": {
+      "max_invocations_per_episode": 1,
+      "max_probe_environment_steps": 4,
+      "action_space_validated": true,
+      "fault_type_access": false,
+      "role": "secondary_or_identifiability_probe"
+    },
+    "selector": {
+      "eligible_actions": [
+        "continue",
+        "requery_policy",
+        "reissue_current_chunk",
+        "switch_camera_subset",
+        "diagnostic_probe",
+        "retry",
+        "replan",
+        "request_help",
+        "terminate"
+      ],
+      "fault_type_access": false
+    },
+    "oracle_fault_type": {
+      "fault_type_access": true,
+      "same_cost_limits_as": "selector",
+      "role": "upper_bound_only"
+    }
+  },
+  "cost_vector": {
+    "elapsed_execution_time_ms": {
+      "measurement": "wall_clock_from_first_policy_request_to_episode_termination",
+      "primary_limit": "<=1.25 * paired_no_monitor_reference"
+    },
+    "extra_compute_ms": {
+      "measurement": "monitor_and_intervention_time_minus_no_monitor_reference",
+      "primary_limit": 250
+    },
+    "peak_memory_mb": {
+      "measurement": "maximum_process_resident_or_gpu_allocated_memory",
+      "primary_limit": "report_only_until_hardware_baseline_is_frozen"
+    },
+    "human_help_count": {
+      "measurement": "one_per_request_help_decision",
+      "primary_limit": 0
+    },
+    "risk_penalty": {
+      "measurement": "task_specific_irreversible_action_event",
+      "primary_limit": 0,
+      "status": "zero_for_current_task_until_a_new_specification_defines_event_semantics"
+    }
+  },
+  "analysis": {
+    "primary_interval": "two_sided_95_percent_paired_bootstrap_or_randomization_interval",
+    "success_claim_rule": "selector_minus_fixed_retry > 0 and interval excludes 0",
+    "scalar_cost": "secondary_only",
+    "scalar_weights": null,
+    "clean_budget_is_event_count": false,
+    "selection_bias_rule": "report intention_to_treat over randomized eligible units; do not condition the primary endpoint on detected_fault"
+  },
+  "implementation_gate": {
+    "state_clone_test": "required_for_causal_common_prefix_claim",
+    "episode_randomization_test": "required_for_fallback_itt_claim",
+    "typed_intervention_serialization": "required",
+    "cost_measurement_and_reference_run": "required",
+    "status": "blocked_until_runtime_checks_pass"
+  }
+}

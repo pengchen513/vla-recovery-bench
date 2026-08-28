@@ -1,0 +1,48 @@
+{
+  "protocol_version": "1.3",
+  "status": "inputs_frozen_before_confirmatory_collection",
+  "estimand": "paired_intention_to_treat_recovery_difference_selector_minus_fixed_retry",
+  "outcome": "binary_task_success",
+  "design": "paired_common_prefix_when_available_else_episode_randomized_itt",
+  "alpha_two_sided": 0.05,
+  "target_power": 0.8,
+  "minimum_detectable_absolute_effect": 0.2,
+  "baseline_recovery_rate": 0.5,
+  "within_pair_correlation": 0.3,
+  "invalid_run_rate": 0.05,
+  "attrition_allowance": 0.1,
+  "resampling_unit": "independent_seed_pair_or_randomized_branch",
+  "analysis": {
+    "primary_test": "paired_randomization_or_exact_mcnemar",
+    "interval": "paired_bootstrap_95_percent",
+    "secondary_model": "pre_specified_mixed_effects_logistic_with_seed_pair_random_intercept",
+    "multiple_comparison_policy": "two_primary_endpoints_tested_first; secondary_endpoints_exploratory",
+    "detection_delay": "right_censored_at_horizon; missed_faults_reported_separately"
+  },
+  "sample_size_rule": {
+    "method": "simulation_required",
+    "replicates": 10000,
+    "candidate_paired_units": [
+      48,
+      60,
+      72,
+      84,
+      96,
+      108,
+      120,
+      144,
+      168,
+      192,
+      240
+    ],
+    "select": "smallest candidate whose simulated rejection probability >= target_power under all declared sensitivity scenarios",
+    "sensitivity_scenarios": [
+      {"baseline_recovery_rate": 0.4, "within_pair_correlation": 0.0, "effect": 0.2},
+      {"baseline_recovery_rate": 0.5, "within_pair_correlation": 0.3, "effect": 0.2},
+      {"baseline_recovery_rate": 0.6, "within_pair_correlation": 0.6, "effect": 0.2},
+      {"baseline_recovery_rate": 0.5, "within_pair_correlation": 0.3, "effect": 0.15}
+    ]
+  },
+  "lock_rule": "pilot estimates may update baseline and correlation only before confirmatory data; alpha, target power, endpoint, and sensitivity grid are immutable",
+  "output": "/home/pc/VLA/outputs/power_analysis_v1_3.json"
+}

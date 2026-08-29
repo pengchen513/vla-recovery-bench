@@ -66,3 +66,7 @@ match the target RoboCasa embodiment.
 
 See [docs/EXPERIMENT_DESIGN.md](docs/EXPERIMENT_DESIGN.md) for the current protocol
 and [docs/SMOLVLA_INTEGRATION.md](docs/SMOLVLA_INTEGRATION.md) for the policy gate.
+The staged monitor-safe diagnostic probe is documented in
+[docs/DIAGNOSTIC_PROBE_V1_1.md](docs/DIAGNOSTIC_PROBE_V1_1.md).
+The reviewed independent calibration/threshold relock is documented in
+[docs/MONITOR_RELOCK_V1_2.md](docs/MONITOR_RELOCK_V1_2.md).

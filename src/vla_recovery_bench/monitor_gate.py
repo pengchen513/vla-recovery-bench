@@ -25,6 +25,7 @@ from .monitor_protocol import (
     SPLIT_KEYS,
     monitor_episode_plan,
     validate_monitor_protocol,
+    validate_monitor_relock_protocol,
 )
 from .recording import to_jsonable
 
@@ -881,13 +882,17 @@ def _validate_shard(
     except (OSError, KeyError, TypeError, ValueError) as error:
         errors.append(f"invalid monitor dataset: {error}")
         episodes = []
-    dataset_errors, by_token = _validate_dataset_episodes(
-        episodes,
-        protocol=protocol,
-        protocol_sha256=protocol_sha256,
-        partition=partition,
-        seeds=seeds,
-    )
+    try:
+        dataset_errors, by_token = _validate_dataset_episodes(
+            episodes,
+            protocol=protocol,
+            protocol_sha256=protocol_sha256,
+            partition=partition,
+            seeds=seeds,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        dataset_errors = [f"cannot construct expected episode plan: {error}"]
+        by_token = {}
     errors.extend(dataset_errors)
     report["episode_count"] = len(episodes)
     report["rows"] = sum(len(episode.features) for episode in episodes)
@@ -926,8 +931,12 @@ def _validate_shard(
         "metrics.not_exposed_fault_episodes",
         errors,
     )
-    expected_plan = to_jsonable(monitor_episode_plan(protocol, partition, seeds=seeds))
-    _same(manifest.get("episode_plan"), expected_plan, "manifest.episode_plan", errors)
+    try:
+        expected_plan = to_jsonable(monitor_episode_plan(protocol, partition, seeds=seeds))
+    except (KeyError, TypeError, ValueError) as error:
+        errors.append(f"cannot construct manifest episode plan: {error}")
+    else:
+        _same(manifest.get("episode_plan"), expected_plan, "manifest.episode_plan", errors)
     errors.extend(_validate_episode_jsonl(directory, by_token=by_token))
     audit_errors, audit_count = _validate_audit_jsonl(
         directory / "audit_stream.jsonl",
@@ -1003,6 +1012,38 @@ def validate_formal_shard_set(
     policy_manifest_sha256 = sha256_file(policy_file)
     report["protocol"]["sha256"] = protocol_sha256
     report["policy_manifest"]["sha256"] = policy_manifest_sha256
+    if protocol.get("relock_version") is not None:
+        parent_reference = Path(str(protocol.get("parent_monitor_protocol", "")))
+        parent_candidates = [
+            protocol_file.parent / parent_reference,
+            protocol_file.parents[1] / parent_reference,
+            parent_reference,
+        ]
+        parent_file = next(
+            (candidate.resolve() for candidate in parent_candidates if candidate.is_file()),
+            None,
+        )
+        if parent_file is None:
+            errors.append(
+                "monitor relock parent protocol is missing: "
+                f"{protocol.get('parent_monitor_protocol')}"
+            )
+            return report
+        try:
+            parent_config = _load_json(parent_file)
+            parent_sha256 = sha256_file(parent_file)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+            errors.append(f"cannot load monitor relock parent protocol: {error}")
+            return report
+        relock_errors = validate_monitor_relock_protocol(
+            protocol, parent_config=parent_config, parent_sha256=parent_sha256
+        )
+        if relock_errors:
+            errors.extend(f"invalid monitor relock: {error}" for error in relock_errors)
+            return report
+        report["protocol"]["relock_version"] = protocol.get("relock_version")
+        report["protocol"]["parent_path"] = str(parent_file)
+        report["protocol"]["parent_sha256"] = parent_sha256
     policy_contract_invalid = False
     if protocol.get("policy", {}).get("name") != policy_manifest.get("policy_name"):
         errors.append("monitor protocol and policy manifest names disagree")

@@ -9,6 +9,7 @@ allowed to create scientific artifacts.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Any
 
 from vla_recovery_bench.monitor_protocol import (
     validate_monitor_protocol,
+    validate_monitor_relock_protocol,
     validate_probe_protocol,
 )
 
@@ -25,6 +27,8 @@ POWER_PATH = ROOT / "configs/power_analysis_v1_4.json"
 INTERVENTION_PATH = ROOT / "configs/intervention_protocol_v1_4.json"
 MONITOR_PATH = ROOT / "configs/monitor_training_v1_0.json"
 PROBE_PATH = ROOT / "configs/diagnostic_probe_v1_0.json"
+PROBE_V11_PATH = ROOT / "configs/diagnostic_probe_v1_1.json"
+MONITOR_RELOCK_PATH = ROOT / "configs/monitor_relock_v1_2.json"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -32,6 +36,37 @@ def _load(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return value
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_relock(relock: dict[str, Any]) -> list[str]:
+    """Validate the relock and its explicitly named parent protocol."""
+    reference = relock.get("parent_monitor_protocol")
+    if not isinstance(reference, str) or not reference:
+        return validate_monitor_relock_protocol(relock)
+    candidates = [
+        (MONITOR_RELOCK_PATH.parent / reference).resolve(),
+        (ROOT / reference).resolve(),
+        Path(reference).resolve(),
+    ]
+    parent_path = next((path for path in candidates if path.is_file()), None)
+    if parent_path is None:
+        return [f"monitor relock parent protocol is missing: {reference}"]
+    try:
+        parent = _load(parent_path)
+        parent_hash = _sha256(parent_path)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        return [f"cannot load monitor relock parent protocol: {error}"]
+    return validate_monitor_relock_protocol(
+        relock, parent_config=parent, parent_sha256=parent_hash
+    )
 
 
 def validate_pilot(pilot: dict[str, Any]) -> list[str]:
@@ -192,11 +227,14 @@ def validate_all() -> list[str]:
     pilot = _load(PILOT_PATH)
     monitor = _load(MONITOR_PATH)
     probe = _load(PROBE_PATH)
+    probe_v11 = _load(PROBE_V11_PATH)
     errors.extend(validate_pilot(pilot))
     errors.extend(validate_power(_load(POWER_PATH)))
     errors.extend(validate_intervention(_load(INTERVENTION_PATH)))
     errors.extend(validate_monitor_protocol(monitor))
+    errors.extend(validate_relock(_load(MONITOR_RELOCK_PATH)))
     errors.extend(validate_probe_protocol(probe, monitor))
+    errors.extend(validate_probe_protocol(probe_v11, monitor))
     return errors
 
 
@@ -215,6 +253,8 @@ def main() -> int:
             str(INTERVENTION_PATH),
             str(MONITOR_PATH),
             str(PROBE_PATH),
+            str(PROBE_V11_PATH),
+            str(MONITOR_RELOCK_PATH),
         ],
         "errors": errors,
     }

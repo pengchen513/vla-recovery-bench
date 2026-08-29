@@ -307,6 +307,37 @@ def _softmax(logits: np.ndarray) -> np.ndarray:
     return values / np.sum(values, axis=-1, keepdims=True)
 
 
+def normalized_posterior_entropy(posterior: Mapping[str, float] | Sequence[float]) -> float:
+    """Return Shannon entropy normalized to the three-class maximum.
+
+    The monitor's mechanism posterior has three classes.  Keeping this helper
+    independent of the simulator makes the probe trigger auditable and avoids
+    silently changing the posterior representation at the runner boundary.
+    """
+    if isinstance(posterior, Mapping):
+        if set(posterior) != set(MECHANISMS):
+            raise ValueError(
+                "posterior mapping must contain exactly the monitor mechanisms: "
+                f"{MECHANISMS}"
+            )
+        try:
+            values = np.asarray([posterior[name] for name in MECHANISMS], dtype=np.float64)
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("posterior mapping values must be numeric") from error
+    else:
+        values = np.asarray(posterior, dtype=np.float64).reshape(-1)
+    if values.shape != (len(MECHANISMS),) or not np.all(np.isfinite(values)):
+        raise ValueError("posterior must contain one finite probability per mechanism")
+    if np.any(values < 0.0):
+        raise ValueError("posterior probabilities must be non-negative")
+    total = float(values.sum())
+    if total <= 0.0 or not np.isclose(total, 1.0, rtol=0.0, atol=1e-6):
+        raise ValueError(f"posterior probabilities must sum to one; got {total}")
+    positive = values[values > 0.0]
+    entropy = float(-np.sum(positive * np.log(positive)))
+    return float(np.clip(entropy / math.log(len(MECHANISMS)), 0.0, 1.0))
+
+
 class FaultConditionedTemporalMonitor:
     """Deterministic temporal encoder plus a three-class mechanism head.
 
@@ -466,6 +497,7 @@ class FaultConditionedTemporalMonitor:
         probabilities = posterior.reshape(-1)
         risk = float(1.0 - probabilities[MECHANISM_TO_INDEX["none"]])
         predicted_index = int(np.argmax(probabilities))
+        entropy = normalized_posterior_entropy(probabilities)
         return {
             "risk": risk,
             "posterior": {
@@ -474,6 +506,7 @@ class FaultConditionedTemporalMonitor:
             "predicted_mechanism": MECHANISMS[predicted_index],
             "failure_detected": bool(risk >= self.threshold_),
             "threshold": float(self.threshold_),
+            "normalized_entropy": entropy,
         }
 
     def predict_features(self, feature: np.ndarray) -> dict[str, Any]:
@@ -494,6 +527,7 @@ class FaultConditionedTemporalMonitor:
                 "threshold": result["threshold"],
                 "feature_version": FEATURE_VERSION,
                 "predicted_mechanism": predicted,
+                "normalized_entropy": result["normalized_entropy"],
             },
         )
 

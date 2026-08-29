@@ -135,7 +135,15 @@ def _gpu_info() -> list[dict[str, str]]:
 def _package_versions() -> dict[str, str]:
     import importlib.metadata
 
-    packages = ("torch", "gymnasium", "mujoco", "robocasa", "robosuite", "numpy")
+    packages = (
+        "torch",
+        "gymnasium",
+        "mujoco",
+        "robocasa",
+        "robosuite",
+        "numpy",
+        "scipy",
+    )
     result: dict[str, str] = {"python": sys.version}
     for package in packages:
         try:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from typing import Any
 
 from .faults import FaultSchedule
@@ -40,6 +41,18 @@ REQUIRED_FORBIDDEN_INPUTS = {
     "info",
     "mujoco_state",
     "final_test_labels",
+}
+
+RELOCK_VERSION = "1.2"
+RELOCK_CALIBRATION_SEEDS = tuple(range(1000, 1050))
+RELOCK_VALIDATION_SEEDS = tuple(range(1100, 1150))
+RELOCK_METADATA_KEYS = {
+    "relock_version",
+    "parent_monitor_protocol",
+    "parent_monitor_protocol_sha256",
+    "relock_reason",
+    "relock_status",
+    "relock_decisions",
 }
 
 
@@ -152,14 +165,91 @@ def validate_monitor_protocol(config: Mapping[str, Any]) -> list[str]:
     return errors
 
 
+def validate_monitor_relock_protocol(
+    config: Mapping[str, Any],
+    *,
+    parent_config: Mapping[str, Any] | None = None,
+    parent_sha256: str | None = None,
+) -> list[str]:
+    """Validate the immutable v1.2 relock envelope around the v1.0 protocol.
+
+    A relock is intentionally a narrow data split change.  The monitor feature
+    schema, policy, information boundary, fault factors, and all gates must be
+    byte-for-byte equivalent to the parent after the two newly assigned seed
+    lists and relock metadata are removed.  ``parent_sha256`` is supplied by a
+    caller that has read the parent file and is checked here when available.
+    """
+    errors = validate_monitor_protocol(config)
+    if config.get("relock_version") != RELOCK_VERSION:
+        errors.append(f"monitor relock_version must be {RELOCK_VERSION}")
+    parent_reference = config.get("parent_monitor_protocol")
+    if not isinstance(parent_reference, str) or not parent_reference:
+        errors.append("monitor relock must declare parent_monitor_protocol")
+    declared_parent_hash = config.get("parent_monitor_protocol_sha256")
+    if not isinstance(declared_parent_hash, str) or len(declared_parent_hash) != 64:
+        errors.append("monitor relock must declare a 64-character parent SHA256")
+    elif any(character not in "0123456789abcdef" for character in declared_parent_hash):
+        errors.append("monitor relock parent SHA256 must be lowercase hexadecimal")
+    if parent_sha256 is not None and declared_parent_hash != parent_sha256:
+        errors.append(
+            "monitor relock parent SHA256 does not match the supplied parent protocol"
+        )
+
+    splits = config.get("splits", {})
+    calibration = tuple(int(seed) for seed in splits.get("calibration_scene_seeds", ()))
+    validation = tuple(int(seed) for seed in splits.get("validation_scene_seeds", ()))
+    if calibration != RELOCK_CALIBRATION_SEEDS:
+        errors.append("v1.2 calibration seeds must be exactly 1000 through 1049")
+    if validation != RELOCK_VALIDATION_SEEDS:
+        errors.append("v1.2 validation seeds must be exactly 1100 through 1149")
+
+    decisions = config.get("relock_decisions", {})
+    expected_decisions = {
+        "threshold_rule": "retain_v1.1_risk_or_entropy_union_rule",
+        "validation_point_gate": "joint_trigger_rate <= 0.05",
+        "validation_confidence_interval": "clopper_pearson_95_percent_report_only",
+        "calibration_seed_range": [1000, 1049],
+        "validation_seed_range": [1100, 1149],
+        "old_failed_artifacts_retained": True,
+        "write_once_output_paths": True,
+        "monitor_checkpoint_unchanged": True,
+    }
+    if decisions != expected_decisions:
+        errors.append("relock_decisions drifted from the approved v1.2 decisions")
+
+    if parent_config is not None:
+        parent_errors = validate_monitor_protocol(parent_config)
+        if parent_errors:
+            errors.extend(f"invalid parent monitor protocol: {error}" for error in parent_errors)
+        else:
+            candidate = deepcopy(dict(config))
+            baseline = deepcopy(dict(parent_config))
+            for key in RELOCK_METADATA_KEYS:
+                candidate.pop(key, None)
+            candidate_splits = candidate.get("splits", {})
+            baseline_splits = baseline.get("splits", {})
+            candidate_splits["calibration_scene_seeds"] = baseline_splits.get(
+                "calibration_scene_seeds"
+            )
+            candidate_splits["validation_scene_seeds"] = baseline_splits.get(
+                "validation_scene_seeds"
+            )
+            if candidate != baseline:
+                errors.append(
+                    "v1.2 relock changed fields beyond calibration/validation seeds or metadata"
+                )
+    return errors
+
+
 def validate_probe_protocol(
     probe: Mapping[str, Any], monitor_config: Mapping[str, Any]
 ) -> list[str]:
     errors: list[str] = []
     if probe.get("protocol_version") != monitor_config.get("protocol_version"):
         errors.append("probe and monitor must target the same research protocol")
-    if probe.get("probe_protocol_version") != "1.0":
-        errors.append("probe_protocol_version must be 1.0")
+    probe_version = str(probe.get("probe_protocol_version", ""))
+    if probe_version not in {"1.0", "1.1"}:
+        errors.append("probe_protocol_version must be 1.0 or 1.1")
     eligibility = probe.get("eligibility", {})
     for field in (
         "no_fault_label_access",
@@ -177,6 +267,51 @@ def validate_probe_protocol(
         errors.append("probe action sequence must exactly match max_environment_steps")
     if [row.get("step") for row in sequence] != list(range(maximum_steps)):
         errors.append("probe steps must be consecutive and zero-indexed")
+    if probe_version == "1.1":
+        trigger = eligibility.get("trigger")
+        if trigger != "risk_alarm_or_normalized_entropy_alarm":
+            errors.append("v1.1 probe trigger must be the locked risk/entropy joint gate")
+        if maximum_steps != 4:
+            errors.append("v1.1 diagnostic probe must contain exactly four environment steps")
+        operations = [str(row.get("operation")) for row in sequence]
+        if operations != [
+            "repeat_previous_requested_action",
+            "force_requery_and_execute_first_action",
+            "continue_requeried_chunk",
+            "continue_requeried_chunk",
+        ]:
+            errors.append("v1.1 probe action semantics drifted from repeat/requery/continue")
+        if declared.get("chunk_reset_after_probe") is not True:
+            errors.append("v1.1 probe must discard the remaining action chunk afterward")
+        comparison = probe.get("comparison", {})
+        if tuple(comparison.get("arms", ())) != ("passive_only", "passive_plus_probe"):
+            errors.append("v1.1 probe must compare passive_only and passive_plus_probe arms")
+        costs = probe.get("cost_vector", {})
+        if int(costs.get("extra_environment_steps_max", -1)) != 4:
+            errors.append("v1.1 probe extra environment-step budget must be four")
+        if probe.get("entropy_lock", {}).get("source") != "clean_calibration_only":
+            errors.append("v1.1 entropy threshold must be locked from clean calibration only")
+        entropy_lock = probe.get("entropy_lock", {})
+        if entropy_lock.get("validation_is_holdout_only") is not True:
+            errors.append("v1.1 entropy validation must remain holdout-only")
+        if entropy_lock.get("normalization") != "H(posterior)/log(3)":
+            errors.append("v1.1 entropy normalization must be H(posterior)/log(3)")
+        try:
+            union_rate = float(entropy_lock.get("union_episode_rate_max"))
+        except (TypeError, ValueError):
+            union_rate = float("nan")
+        if not 0.0 < union_rate < 1.0:
+            errors.append("v1.1 entropy union episode rate must be in (0, 1)")
+        elif union_rate != 0.05:
+            errors.append("v1.1 entropy union episode rate must remain the frozen 0.05 cap")
+        if probe.get("probe", {}).get("post_probe_action") != "force_fresh_policy_query":
+            errors.append("v1.1 probe must force a fresh policy query after completion")
+        if probe.get("comparison", {}).get("recovery_selector") != "disabled":
+            errors.append("v1.1 diagnostic probe must not select recovery actions")
+        if probe.get("staging", {}).get("pilot_seed_range") != [500, 511]:
+            errors.append("v1.1 pilot seeds must be the frozen 500-511 range")
+        if probe.get("staging", {}).get("pilot_episode_count") != 72:
+            errors.append("v1.1 pilot must contain 72 arm-by-condition episodes")
     if probe.get("gates", {}).get("probe_must_not_run_before_monitor_calibration") is not True:
         errors.append("probe must remain blocked until monitor calibration")
     return errors

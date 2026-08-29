@@ -168,6 +168,11 @@ class GrootRoboCasaPolicy:
         self.client = client
         self._actions: deque[Action] = deque()
         self._requested_action_chunk: tuple[Action, ...] = ()
+        self._chunk_id = -1
+        self._next_chunk_position = 0
+        self._last_emitted_chunk_id: int | None = None
+        self._last_emitted_position: int | None = None
+        self._last_emitted_action: Action | None = None
         self.last_inference_latency_ms: float | None = None
         self.last_chunk_saturation: dict[str, Any] | None = None
         self.inference_count = 0
@@ -176,6 +181,11 @@ class GrootRoboCasaPolicy:
     def reset(self) -> None:
         self._actions.clear()
         self._requested_action_chunk = ()
+        self._chunk_id = -1
+        self._next_chunk_position = 0
+        self._last_emitted_chunk_id = None
+        self._last_emitted_position = None
+        self._last_emitted_action = None
         self.last_inference_latency_ms = None
         self.last_chunk_saturation = None
         self.episode_saturated_values = 0
@@ -192,9 +202,64 @@ class GrootRoboCasaPolicy:
             actions = self._validate_action_chunk(response)
             self._actions.extend(actions)
             self._requested_action_chunk = tuple(_copy_action(action) for action in actions)
+            self._chunk_id += 1
+            self._next_chunk_position = 0
         action = self._actions.popleft()
         validate_action(self.action_space, action)
+        self._last_emitted_chunk_id = self._chunk_id
+        self._last_emitted_position = self._next_chunk_position
+        self._last_emitted_action = _copy_action(action)
+        self._next_chunk_position += 1
         return action
+
+    def repeat_last_action(self) -> Action:
+        """Return the previous requested action without advancing its chunk.
+
+        This is the first step of the diagnostic probe.  It deliberately does
+        not call the policy server and does not mutate the queued action cursor.
+        """
+        if self._last_emitted_action is None:
+            raise RuntimeError("cannot repeat an action before the first policy action")
+        self.last_inference_latency_ms = None
+        self.last_chunk_saturation = None
+        action = _copy_action(self._last_emitted_action)
+        validate_action(self.action_space, action)
+        return action
+
+    def force_requery(self) -> None:
+        """Discard queued actions while preserving episode-level policy state."""
+        self._actions.clear()
+        self.last_inference_latency_ms = None
+        self.last_chunk_saturation = None
+
+    @property
+    def last_action(self) -> Action | None:
+        """A defensive copy of the most recently emitted requested action."""
+        return (
+            None
+            if self._last_emitted_action is None
+            else _copy_action(self._last_emitted_action)
+        )
+
+    @property
+    def last_chunk_id(self) -> int | None:
+        return self._last_emitted_chunk_id
+
+    @property
+    def last_chunk_position(self) -> int | None:
+        return self._last_emitted_position
+
+    def chunk_state(self) -> dict[str, Any]:
+        """Return non-privileged metadata for the most recently emitted action."""
+        if self._last_emitted_chunk_id is None or self._last_emitted_position is None:
+            raise RuntimeError("chunk state is unavailable before the first policy action")
+        return {
+            "chunk_id": self._last_emitted_chunk_id,
+            "position_in_chunk": self._last_emitted_position,
+            "chunk_length": self.action_chunk_length,
+            "remaining_actions": len(self._actions),
+            "policy_inference_latency_ms": self.last_inference_latency_ms,
+        }
 
     @property
     def requested_action_chunk(self) -> tuple[Action, ...]:

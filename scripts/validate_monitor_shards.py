@@ -19,7 +19,7 @@ from vla_recovery_bench.monitor_gate import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PROTOCOL = ROOT / "configs/monitor_training_v1_0.json"
+DEFAULT_PROTOCOL = ROOT / "configs/monitor_relock_v1_2.json"
 DEFAULT_MANIFEST = ROOT / "configs/policies/groot_n1_5_robocasa_atomic_seen_30p.json"
 
 

@@ -1,0 +1,132 @@
+{
+  "protocol_version": "1.4",
+  "probe_protocol_version": "1.1",
+  "status": "locked_runtime_diagnostic_probe_protocol",
+  "scientific_result": false,
+  "purpose": "test_whether_a_bounded_non_privileged_probe_adds_mechanism_information",
+  "environment": {
+    "id": "robocasa/PickPlaceCounterToCabinet",
+    "split": "target",
+    "control_frequency_hz": 20,
+    "action_chunk_length": 16,
+    "horizon": 750
+  },
+  "eligibility": {
+    "trigger": "risk_alarm_or_normalized_entropy_alarm",
+    "max_invocations_per_episode": 1,
+    "no_fault_label_access": true,
+    "no_reward_or_success_access": true,
+    "no_executed_action_access": true,
+    "clean_budget_counts_probe_as_intervention": true
+  },
+  "entropy_lock": {
+    "source": "clean_calibration_only",
+    "risk_threshold_source": "frozen_monitor_checkpoint_calibration",
+    "normalization": "H(posterior)/log(3)",
+    "range": [0.0, 1.0],
+    "union_episode_rate_max": 0.05,
+    "validation_is_holdout_only": true,
+    "artifact": "probe_lock.json"
+  },
+  "probe": {
+    "name": "bounded_repeat_requery_and_hold",
+    "max_environment_steps": 4,
+    "action_sequence": [
+      {
+        "step": 0,
+        "operation": "repeat_previous_requested_action",
+        "camera_subset": "all_declared_cameras"
+      },
+      {
+        "step": 1,
+        "operation": "force_requery_and_execute_first_action",
+        "camera_subset": "all_declared_cameras"
+      },
+      {
+        "step": 2,
+        "operation": "continue_requeried_chunk",
+        "camera_subset": "all_declared_cameras"
+      },
+      {
+        "step": 3,
+        "operation": "continue_requeried_chunk",
+        "camera_subset": "all_declared_cameras"
+      }
+    ],
+    "action_space_contract": "native_robocasa_structured_dict",
+    "chunk_reset_after_probe": true,
+    "post_probe_action": "force_fresh_policy_query",
+    "probe_outputs": [
+      "observation_delta",
+      "requested_action_delta",
+      "policy_requery_latency",
+      "camera_temporal_consistency",
+      "mechanism_posterior_delta"
+    ]
+  },
+  "comparison": {
+    "arms": ["passive_only", "passive_plus_probe"],
+    "assignment": "episode_level_sha256_pair_randomization",
+    "same_seed_pairing": true,
+    "pair_unit": "scene_seed_and_condition",
+    "oracle_fault_type": "offline_audit_only",
+    "recovery_selector": "disabled",
+    "primary_probe_endpoint": "paired_change_in_mechanism_log_loss",
+    "secondary_endpoints": [
+      "balanced_accuracy",
+      "macro_f1",
+      "clean_joint_trigger_rate",
+      "additional_environment_steps",
+      "policy_requery_count",
+      "probe_compute_latency"
+    ]
+  },
+  "cost_vector": {
+    "extra_environment_steps_max": 4,
+    "extra_compute_ms_max": 250,
+    "human_help_count_max": 0,
+    "risk_penalty_max": 0
+  },
+  "staging": {
+    "debug_seeds": [500, 501, 502],
+    "pilot_seed_range": [500, 511],
+    "pilot_episode_count": 72,
+    "final_seeds": [900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915, 916, 917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929],
+    "final_requires_separate_lock": true
+  },
+  "analysis": {
+    "training_split": "monitor_training_v1_0.train_scene_seeds",
+    "calibration_split": "monitor_training_v1_0.calibration_scene_seeds",
+    "validation_split": "monitor_training_v1_0.validation_scene_seeds",
+    "final_split": "monitor_training_v1_0.final_test_scene_seeds",
+    "cluster_unit": "independent_scene_seed",
+    "interval": "paired_cluster_bootstrap_95_percent",
+    "estimand": "probe_improvement_minus_passive_improvement_at_post_window",
+    "no_state_clone_causal_claim": true,
+    "no_trigger_itt_value": 0.0,
+    "pilot_gate": {
+      "point_estimate_positive": true,
+      "clean_joint_trigger_rate_max": 0.05,
+      "confidence_interval_report_only": true,
+      "all_cost_caps_pass": true
+    }
+  },
+  "artifacts": {
+    "lock": "probe_lock.json",
+    "manifest": "run_manifest.json",
+    "episodes": "episodes.jsonl",
+    "monitor_stream": "monitor_stream.jsonl",
+    "probe_stream": "probe_stream.jsonl",
+    "privileged_audit": "privileged_audit.jsonl",
+    "metrics": "metrics.json",
+    "validation": "artifact_validation.json",
+    "analysis": "analysis/metrics.json"
+  },
+  "gates": {
+    "probe_must_not_run_before_monitor_calibration": true,
+    "probe_must_be_compared_against_passive_only": true,
+    "probe_cannot_unlock_recovery_without_cost_gate": true,
+    "final_seeds_must_not_be_accessed_before_pilot_review": true,
+    "no_recovery_actions": true
+  }
+}

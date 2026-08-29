@@ -32,7 +32,10 @@ from vla_recovery_bench.groot_adapter import (
 from vla_recovery_bench.monitor import FEATURE_NAMES, FEATURE_VERSION, context_to_feature
 from vla_recovery_bench.monitor_dataset import MonitorDatasetWriter, validate_monitor_dataset
 from vla_recovery_bench.monitor_gate import build_shard_integrity_manifest
-from vla_recovery_bench.monitor_protocol import monitor_episode_plan
+from vla_recovery_bench.monitor_protocol import (
+    monitor_episode_plan,
+    validate_monitor_relock_protocol,
+)
 from vla_recovery_bench.recording import to_jsonable
 from vla_recovery_bench.robocasa_adapter import RoboCasaEnvironment, describe_action_space
 from vla_recovery_bench.types import ActionChunkMetadata, AuditRecord, FaultPhase, MonitorContext
@@ -66,7 +69,7 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution path
         _verify_checkpoint,
     )
 
-DEFAULT_PROTOCOL = ROOT / "configs/monitor_training_v1_0.json"
+DEFAULT_PROTOCOL = ROOT / "configs/monitor_relock_v1_2.json"
 
 
 def _record(stream: Any, event_type: str, **payload: Any) -> None:
@@ -358,6 +361,25 @@ def main() -> int:
         raise RuntimeError("source /home/pc/VLA/env.sh before collecting monitor data")
     protocol = _load_json(args.protocol)
     manifest = _load_json(args.manifest)
+    if protocol.get("relock_version") is not None:
+        reference = Path(str(protocol.get("parent_monitor_protocol", "")))
+        candidates = [
+            args.protocol.parent / reference,
+            args.protocol.resolve().parents[1] / reference,
+            reference,
+        ]
+        parent_path = next(
+            (candidate.resolve() for candidate in candidates if candidate.is_file()), None
+        )
+        if parent_path is None:
+            raise ValueError(f"monitor relock parent protocol is missing: {reference}")
+        parent = _load_json(parent_path)
+        parent_hash = _sha256(parent_path)
+        relock_errors = validate_monitor_relock_protocol(
+            protocol, parent_config=parent, parent_sha256=parent_hash
+        )
+        if relock_errors:
+            raise ValueError(f"invalid monitor relock protocol: {relock_errors}")
     configured_horizon = int(protocol["environment"]["horizon"])
     horizon = configured_horizon if args.horizon is None else int(args.horizon)
     if horizon <= 0 or horizon > configured_horizon:
@@ -520,6 +542,11 @@ def main() -> int:
             "partition_complete": partition_complete,
             "protocol_version": protocol["protocol_version"],
             "monitor_protocol_version": protocol["monitor_protocol_version"],
+            "relock_version": protocol.get("relock_version"),
+            "parent_monitor_protocol": protocol.get("parent_monitor_protocol"),
+            "parent_monitor_protocol_sha256": protocol.get(
+                "parent_monitor_protocol_sha256"
+            ),
             "partition": args.partition,
             "seeds": selected_seeds,
             "episode_count": len(results),
@@ -557,6 +584,11 @@ def main() -> int:
             {
                 "protocol_version": protocol["protocol_version"],
                 "monitor_protocol_version": protocol["monitor_protocol_version"],
+                "relock_version": protocol.get("relock_version"),
+                "parent_monitor_protocol": protocol.get("parent_monitor_protocol"),
+                "parent_monitor_protocol_sha256": protocol.get(
+                    "parent_monitor_protocol_sha256"
+                ),
                 "status": "completed",
                 "scientific_result": False,
                 "debug": debug,

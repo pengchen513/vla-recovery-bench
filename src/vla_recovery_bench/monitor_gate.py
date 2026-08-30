@@ -118,9 +118,7 @@ def _reject_nonfinite_json(value: str) -> None:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    value = json.loads(
-        path.read_text(encoding="utf-8"), parse_constant=_reject_nonfinite_json
-    )
+    value = json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_nonfinite_json)
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return value
@@ -191,9 +189,7 @@ def _validate_action(
             errors.append(f"invalid {context}.{key} or action contract: {error}")
             continue
         if values.shape != shape or low.shape != shape or high.shape != shape:
-            errors.append(
-                f"{context}.{key} shape mismatch: expected={shape}, got={values.shape}"
-            )
+            errors.append(f"{context}.{key} shape mismatch: expected={shape}, got={values.shape}")
             continue
         if not np.all(np.isfinite(values)):
             errors.append(f"{context}.{key} contains NaN or Inf")
@@ -237,9 +233,7 @@ def _validate_dataset_episodes(
 ) -> tuple[list[str], dict[str, MonitorDatasetEpisode]]:
     errors: list[str] = []
     expected_plan = monitor_episode_plan(protocol, partition, seeds=seeds)
-    expected_by_key = {
-        (int(item["seed"]), str(item["condition"])): item for item in expected_plan
-    }
+    expected_by_key = {(int(item["seed"]), str(item["condition"])): item for item in expected_plan}
     observed_by_key: dict[tuple[int, str], MonitorDatasetEpisode] = {}
     by_token: dict[str, MonitorDatasetEpisode] = {}
     for episode in episodes:
@@ -310,9 +304,7 @@ def _validate_dataset_episodes(
             errors.append(f"episode {episode.token} observation/control timestamps disagree")
         if rows:
             expected_positions = episode.control_steps % ACTION_HORIZON
-            if not np.array_equal(
-                episode.features[:, CHUNK_POSITION_INDEX], expected_positions
-            ):
+            if not np.array_equal(episode.features[:, CHUNK_POSITION_INDEX], expected_positions):
                 errors.append(f"episode {episode.token} chunk positions are inconsistent")
             if not np.all(episode.features[:, CHUNK_LENGTH_INDEX] == ACTION_HORIZON):
                 errors.append(f"episode {episode.token} chunk length is not {ACTION_HORIZON}")
@@ -405,8 +397,7 @@ def _validate_episode_jsonl(
             errors,
         )
         expected_applied_faults = sum(
-            int(fault["step"]) < len(episode.features)
-            for fault in (episode.fault_schedule or [])
+            int(fault["step"]) < len(episode.features) for fault in (episode.fault_schedule or [])
         )
         _same(
             summary.get("configured_fault_count"),
@@ -422,11 +413,7 @@ def _validate_episode_jsonl(
         )
         _same(summary.get("success"), episode.success, f"episode {token}.success", errors)
         saturated = summary.get("action_saturated_values")
-        if (
-            not isinstance(saturated, int)
-            or isinstance(saturated, bool)
-            or saturated < 0
-        ):
+        if not isinstance(saturated, int) or isinstance(saturated, bool) or saturated < 0:
             errors.append(f"episode {token}.action_saturated_values is not non-negative")
     return errors
 
@@ -491,13 +478,9 @@ def _validate_audit_jsonl(
             if isinstance(requested, Mapping) and 0 <= control_step < len(episode.features):
                 try:
                     flat_action = _flatten_action(requested)
-                    chunk_position = int(
-                        episode.features[control_step, CHUNK_POSITION_INDEX]
-                    )
+                    chunk_position = int(episode.features[control_step, CHUNK_POSITION_INDEX])
                     start = ACTION_FEATURE_START + chunk_position * flat_action.size
-                    declared = episode.features[
-                        control_step, start : start + flat_action.size
-                    ]
+                    declared = episode.features[control_step, start : start + flat_action.size]
                     if declared.shape != flat_action.shape or not np.allclose(
                         declared, flat_action, rtol=0.0, atol=1e-6
                     ):
@@ -564,9 +547,7 @@ def _validate_audit_jsonl(
                 )
             application = record.get("application")
             if not isinstance(application, Mapping):
-                errors.append(
-                    f"fault audit {token}[{fault_index}] has no application object"
-                )
+                errors.append(f"fault audit {token}[{fault_index}] has no application object")
                 continue
             for field, expected in (
                 ("fault_id", expected_fault["fault_id"]),
@@ -740,14 +721,10 @@ def _validate_shard(
         missing_keys = sorted(set(SHARD_ARTIFACT_PATHS) - set(outputs))
         extra_keys = sorted(set(outputs) - set(SHARD_ARTIFACT_PATHS))
         if missing_keys or extra_keys:
-            errors.append(
-                f"artifact path set mismatch: missing={missing_keys}, extra={extra_keys}"
-            )
+            errors.append(f"artifact path set mismatch: missing={missing_keys}, extra={extra_keys}")
         for key, filename in SHARD_ARTIFACT_PATHS.items():
             if key in outputs and Path(str(outputs[key])).name != filename:
-                errors.append(
-                    f"artifact path {key} must name {filename}, got={outputs[key]!r}"
-                )
+                errors.append(f"artifact path {key} must name {filename}, got={outputs[key]!r}")
 
     expected_environment = protocol["environment"]
     for source_name, source in (("metrics", metrics), ("manifest", manifest)):
@@ -808,9 +785,7 @@ def _validate_shard(
     ):
         initial_hash = state.get("initial_parameter_sha256")
         if not initial_hash or initial_hash != current_hash:
-            errors.append(
-                f"{state_name} initial/current parameter hashes are missing or changed"
-            )
+            errors.append(f"{state_name} initial/current parameter hashes are missing or changed")
     _same(
         metrics.get("policy", {}).get("parameter_sha256_before"),
         before_hash,
@@ -915,10 +890,7 @@ def _validate_shard(
     )
     _same(
         metrics.get("exposed_fault_episodes"),
-        sum(
-            episode.condition != "clean" and bool(episode.exposure.any())
-            for episode in episodes
-        ),
+        sum(episode.condition != "clean" and bool(episode.exposure.any()) for episode in episodes),
         "metrics.exposed_fault_episodes",
         errors,
     )
@@ -1083,9 +1055,7 @@ def validate_formal_shard_set(
     report["missing_seeds"] = sorted(expected_set - observed_set)
     report["extra_seeds"] = sorted(observed_set - expected_set)
     report["duplicate_seeds"] = sorted(seed for seed, count in seed_counts.items() if count > 1)
-    report["observed_episode_count"] = sum(
-        int(shard["episode_count"]) for shard in shard_reports
-    )
+    report["observed_episode_count"] = sum(int(shard["episode_count"]) for shard in shard_reports)
     if report["missing_seeds"]:
         errors.append(f"partition is missing seeds: {report['missing_seeds']}")
     if report["extra_seeds"]:
@@ -1211,32 +1181,37 @@ def validate_mixed_source_shard_set(
         return report
     target_hash = sha256_file(target_file)
     report["target_protocol"]["sha256"] = target_hash
-    if target.get("relock_version") != "1.3":
-        errors.append("mixed-source gate requires a v1.3 target relock protocol")
+    target_relock_version = str(target.get("relock_version", ""))
+    if target_relock_version not in {"1.3", "1.4"}:
+        errors.append("mixed-source gate requires a supported v1.3 or v1.4 target relock protocol")
     else:
         parent_reference = target.get("parent_monitor_protocol")
         if not isinstance(parent_reference, str) or not parent_reference:
-            errors.append("v1.3 target relock parent protocol is missing")
+            errors.append(f"v{target_relock_version} target relock parent protocol is missing")
         else:
             parent_file = _resolve_protocol_reference(
                 parent_reference, relative_to=target_file.parents[1]
             )
             if not parent_file.is_file():
-                errors.append(f"v1.3 target relock parent protocol is missing: {parent_reference}")
+                errors.append(
+                    f"v{target_relock_version} target relock parent protocol is missing: "
+                    f"{parent_reference}"
+                )
             else:
                 try:
                     parent_config = _load_json(parent_file)
                     parent_hash = sha256_file(parent_file)
                 except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
-                    errors.append(f"cannot load v1.3 target relock parent: {error}")
+                    errors.append(
+                        f"cannot load v{target_relock_version} target relock parent: {error}"
+                    )
                 else:
                     relock_errors = validate_monitor_relock_protocol(
                         target, parent_config=parent_config, parent_sha256=parent_hash
                     )
                     if relock_errors:
                         errors.extend(
-                            f"invalid target monitor relock: {error}"
-                            for error in relock_errors
+                            f"invalid target monitor relock: {error}" for error in relock_errors
                         )
                     report["target_protocol"]["parent_path"] = str(parent_file)
                     report["target_protocol"]["parent_sha256"] = parent_hash
@@ -1246,12 +1221,13 @@ def validate_mixed_source_shard_set(
     source_seed_sets: dict[str, set[int]] = {}
     for partition in requested:
         declared = str(source_protocol_paths[partition])
-        if partition == "validation" and declared == "self":
+        self_partitions = (
+            {"validation"} if target_relock_version == "1.3" else {"calibration", "validation"}
+        )
+        if partition in self_partitions and declared == "self":
             source_file = target_file
         else:
-            source_file = _resolve_protocol_reference(
-                declared, relative_to=target_file.parents[1]
-            )
+            source_file = _resolve_protocol_reference(declared, relative_to=target_file.parents[1])
         source_record: dict[str, Any] = {
             "declared_path": declared,
             "path": str(source_file),
@@ -1271,8 +1247,8 @@ def validate_mixed_source_shard_set(
         report["sources"][partition] = source_record
         source_configs[partition] = source_config
         source_contracts[partition] = _protocol_contract(source_config)
-        if partition == "validation" and source_file != target_file:
-            errors.append("validation source must resolve to the target protocol via self")
+        if partition in self_partitions and source_file != target_file:
+            errors.append(f"{partition} source must resolve to the target protocol via self")
         declaration = target.get("source_protocols", {}).get(partition, {})
         if not isinstance(declaration, Mapping):
             errors.append(f"target source_protocols.{partition} is missing")
@@ -1283,17 +1259,15 @@ def validate_mixed_source_shard_set(
                     f"target source_protocols.{partition}.path mismatch: "
                     f"expected={declared!r}, got={declared_target_path!r}"
                 )
-            if partition != "validation" and declaration.get("sha256") != source_hash:
+            if partition not in self_partitions and declaration.get("sha256") != source_hash:
                 errors.append(
                     f"target source_protocols.{partition}.sha256 does not match source file"
                 )
-            if partition == "validation" and declared != "self":
-                errors.append("target validation source declaration must be self")
+            if partition in self_partitions and declared != "self":
+                errors.append(f"target {partition} source declaration must be self")
     if source_contracts:
         baseline_partition = (
-            "validation"
-            if "validation" in source_contracts
-            else next(iter(source_contracts))
+            "validation" if "validation" in source_contracts else next(iter(source_contracts))
         )
         baseline_contract = source_contracts[baseline_partition]
         for partition, contract in source_contracts.items():
@@ -1303,9 +1277,7 @@ def validate_mixed_source_shard_set(
                     for field in baseline_contract
                     if contract.get(field) != baseline_contract.get(field)
                 ]
-                errors.append(
-                    f"source protocol contract differs for {partition}: {differing}"
-                )
+                errors.append(f"source protocol contract differs for {partition}: {differing}")
 
     for partition in requested:
         source_file = report["sources"].get(partition, {}).get("path")
@@ -1320,18 +1292,13 @@ def validate_mixed_source_shard_set(
         report["partitions"][partition] = gate
         if not gate.get("passed"):
             errors.append(format_gate_failure(gate))
-        seeds = {
-            int(seed)
-            for shard in gate.get("shards", [])
-            for seed in shard.get("seeds", [])
-        }
+        seeds = {int(seed) for shard in gate.get("shards", []) for seed in shard.get("seeds", [])}
         source_seed_sets[partition] = seeds
 
     for index, first in enumerate(requested):
         for second in requested[index + 1 :]:
             overlap = sorted(
-                source_seed_sets.get(first, set())
-                & source_seed_sets.get(second, set())
+                source_seed_sets.get(first, set()) & source_seed_sets.get(second, set())
             )
             report["cross_partition"]["seed_overlap"][f"{first}:{second}"] = overlap
             if overlap:

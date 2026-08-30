@@ -46,9 +46,7 @@ class LockBlockedError(ValueError):
         self.details = details or {}
 
 
-def _binomial_interval(
-    successes: int, total: int, *, confidence: float = 0.95
-) -> dict[str, float]:
+def _binomial_interval(successes: int, total: int, *, confidence: float = 0.95) -> dict[str, float]:
     """Return an exact two-sided Clopper–Pearson interval for a binomial rate."""
     if total <= 0 or not 0 <= successes <= total:
         raise ValueError("binomial successes/total are out of range")
@@ -62,9 +60,7 @@ def _binomial_interval(
         ) from error
     alpha = 1.0 - confidence
     lower = (
-        0.0
-        if successes == 0
-        else float(beta.ppf(alpha / 2.0, successes, total - successes + 1))
+        0.0 if successes == 0 else float(beta.ppf(alpha / 2.0, successes, total - successes + 1))
     )
     upper = (
         1.0
@@ -132,8 +128,8 @@ def _resolve_lock_sources(
     calibration_protocol: Path | None,
     validation_protocol: Path | None,
 ) -> tuple[dict[str, str], dict[str, Path]]:
-    """Resolve source protocols and reject paths that drift from v1.3 metadata."""
-    if protocol.get("relock_version") != "1.3":
+    """Resolve source protocols and reject paths that drift from relock metadata."""
+    if protocol.get("relock_version") not in {"1.3", "1.4"}:
         target = protocol_path.resolve()
         return (
             {"calibration": str(target), "validation": str(target)},
@@ -146,7 +142,9 @@ def _resolve_lock_sources(
     for partition, option in options.items():
         path_decl = str(declarations.get(partition, {}).get("path", ""))
         if not path_decl:
-            raise ValueError(f"v1.3 source_protocols.{partition}.path is missing")
+            raise ValueError(
+                f"v{protocol.get('relock_version')} source_protocols.{partition}.path is missing"
+            )
         expected = (
             protocol_path.resolve()
             if path_decl == "self"
@@ -155,7 +153,7 @@ def _resolve_lock_sources(
         actual = expected if option is None else option.resolve()
         if actual != expected:
             raise ValueError(
-                f"{partition} protocol does not match v1.3 declaration: "
+                f"{partition} protocol does not match relock declaration: "
                 f"expected={expected}, got={actual}"
             )
         declared[partition] = path_decl
@@ -202,9 +200,7 @@ def _prediction_summaries(
                 "episode_token": episode.token,
                 "seed": episode.seed,
                 "maximum_risk": max(float(row["risk"]) for row in predictions),
-                "maximum_entropy": max(
-                    float(row["normalized_entropy"]) for row in predictions
-                ),
+                "maximum_entropy": max(float(row["normalized_entropy"]) for row in predictions),
                 "steps": len(predictions),
             }
         )
@@ -292,9 +288,24 @@ def lock_threshold(
         )
     monitor = FaultConditionedTemporalMonitor.load(monitor_path)
     risk_threshold = float(monitor.threshold_)
+    expected_calibration_episodes = 3 * len(
+        protocol.get("splits", {}).get("calibration_scene_seeds", ())
+    )
+    expected_validation_episodes = 3 * len(
+        protocol.get("splits", {}).get("validation_scene_seeds", ())
+    )
+    # Each scene seed contributes exactly one clean row to the threshold
+    # calculation.  The formal shard gate has already checked the three-way
+    # condition cross, so derive this count from the frozen protocol rather
+    # than silently assuming a particular future sample size.
+    expected_calibration_clean = expected_calibration_episodes // 3
+    expected_validation_clean = expected_validation_episodes // 3
     calibration = _prediction_summaries(monitor, calibration_dirs, clean_only=True)
-    if len(calibration) != 50:
-        raise ValueError(f"expected 50 clean calibration episodes, got {len(calibration)}")
+    if len(calibration) != expected_calibration_clean:
+        raise ValueError(
+            "unexpected clean calibration episode count: "
+            f"expected={expected_calibration_clean}, got={len(calibration)}"
+        )
     lock = choose_entropy_threshold(
         calibration,
         risk_threshold=risk_threshold,
@@ -302,12 +313,23 @@ def lock_threshold(
     )
 
     validation = _prediction_summaries(monitor, validation_dirs, clean_only=False)
-    if len(validation) != 50:
-        raise ValueError(f"expected 50 clean validation episodes, got {len(validation)}")
+    if len(validation) != expected_validation_clean:
+        raise ValueError(
+            "unexpected clean validation episode count: "
+            f"expected={expected_validation_clean}, got={len(validation)}"
+        )
+
+    calibration_seeds = sorted({int(row["seed"]) for row in calibration})
+    validation_seeds = sorted({int(row["seed"]) for row in validation})
+    pilot_seeds = set(range(500, 512))
+    overlap = sorted((set(calibration_seeds) | set(validation_seeds)) & pilot_seeds)
+    if protocol.get("relock_version") == "1.4" and overlap:
+        raise ValueError(f"v1.4 fresh threshold data overlaps the frozen pilot seeds: {overlap}")
+    if set(calibration_seeds) & set(validation_seeds):
+        raise ValueError("calibration and validation clean seeds overlap")
     validation_risk = sum(row["maximum_risk"] >= risk_threshold for row in validation)
     validation_joint = sum(
-        row["maximum_risk"] >= risk_threshold
-        or row["maximum_entropy"] >= lock["entropy_threshold"]
+        row["maximum_risk"] >= risk_threshold or row["maximum_entropy"] >= lock["entropy_threshold"]
         for row in validation
     )
     validation_rate = validation_joint / len(validation)
@@ -381,6 +403,20 @@ def lock_threshold(
                 "validation_confidence_interval"
             ),
             "monitor_retraining": protocol.get("monitor_retraining"),
+            "fresh_data_policy": protocol.get("fresh_data_policy"),
+        },
+        "data_independence": {
+            "calibration_clean_seeds": calibration_seeds,
+            "validation_clean_seeds": validation_seeds,
+            "pilot_seed_range": [500, 511],
+            "pilot_seed_overlap": overlap,
+            "pilot_data_used_for_threshold": False,
+            "threshold_selection_source": (
+                "fresh_calibration_clean_episodes_only"
+                if protocol.get("relock_version") == "1.4"
+                else "declared_calibration_clean_episodes_only"
+            ),
+            "validation_source": "fresh_validation_clean_episodes_only",
         },
         "rate_reports": {
             "calibration_joint_trigger": _rate_report(

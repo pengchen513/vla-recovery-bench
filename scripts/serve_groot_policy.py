@@ -29,6 +29,15 @@ class FrozenGrootService:
         from gr00t.experiment.data_config import DATA_CONFIG_MAP
         from gr00t.model.policy import Gr00tPolicy
 
+        # The flow-matching head samples its initial trajectory from the global
+        # torch RNG.  Deterministic kernels plus the per-episode set_seed RPC
+        # make paired prefixes reproducible without changing GR00T source.
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        try:
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        except (AttributeError, RuntimeError):
+            pass
         data_config = DATA_CONFIG_MAP["panda_omron"]
         self.policy = Gr00tPolicy(
             model_path=checkpoint,
@@ -55,7 +64,8 @@ class FrozenGrootService:
         random.seed(seed)
         np.random.seed(seed)
         self._torch.manual_seed(seed)
-        self._torch.cuda.manual_seed_all(seed)
+        if self._torch.cuda.is_available():
+            self._torch.cuda.manual_seed_all(seed)
         self._episode_seed = seed
         return {"seed": seed}
 

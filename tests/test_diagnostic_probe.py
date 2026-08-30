@@ -14,6 +14,7 @@ from scripts.run_diagnostic_probe import (
     _observation_delta,
     _plan_for_stage,
     _posterior_delta,
+    _validate_pair_prefixes,
     _validate_run_artifacts,
 )
 from vla_recovery_bench.diagnostic_probe import (
@@ -70,6 +71,48 @@ class _Client:
 
 
 class DiagnosticProbeTest(unittest.TestCase):
+    def test_pair_prefix_validator_requires_equal_prefixes(self) -> None:
+        rows = [
+            {
+                "pair_id": "scene-1",
+                "condition": "clean",
+                "arm": "passive_only",
+                "prefix_hash_to_trigger": "same",
+                "prefix_step_count": 4,
+                "trigger_observation_step": None,
+            },
+            {
+                "pair_id": "scene-1",
+                "condition": "clean",
+                "arm": "passive_plus_probe",
+                "prefix_hash_to_trigger": "same",
+                "prefix_step_count": 4,
+                "trigger_observation_step": None,
+            },
+        ]
+        errors, report = _validate_pair_prefixes(rows)
+        self.assertEqual(errors, [])
+        self.assertTrue(report["passed"])
+        rows[1]["prefix_hash_to_trigger"] = "different"
+        errors, report = _validate_pair_prefixes(rows)
+        self.assertTrue(any("hash mismatch" in error for error in errors))
+        self.assertFalse(report["passed"])
+
+    def test_pair_prefix_validator_rejects_missing_arm(self) -> None:
+        errors, _ = _validate_pair_prefixes(
+            [
+                {
+                    "pair_id": "scene-1",
+                    "condition": "clean",
+                    "arm": "passive_only",
+                    "prefix_hash_to_trigger": "same",
+                    "prefix_step_count": 4,
+                    "trigger_observation_step": None,
+                }
+            ]
+        )
+        self.assertTrue(any("missing arms" in error for error in errors))
+
     def test_clopper_pearson_interval_is_report_only_and_well_formed(self) -> None:
         interval = _binomial_interval(0, 50)
         self.assertEqual(interval["lower"], 0.0)
@@ -78,12 +121,8 @@ class DiagnosticProbeTest(unittest.TestCase):
         self.assertEqual(midpoint["episodes"], 2)
         self.assertEqual(midpoint["total_episodes"], 50)
         self.assertAlmostEqual(midpoint["rate"], 0.04)
-        self.assertLessEqual(
-            midpoint["clopper_pearson_95_percent"]["lower"], midpoint["rate"]
-        )
-        self.assertGreaterEqual(
-            midpoint["clopper_pearson_95_percent"]["upper"], midpoint["rate"]
-        )
+        self.assertLessEqual(midpoint["clopper_pearson_95_percent"]["lower"], midpoint["rate"])
+        self.assertGreaterEqual(midpoint["clopper_pearson_95_percent"]["upper"], midpoint["rate"])
 
     def test_entropy_extremes_and_order_statistic_lock(self) -> None:
         self.assertAlmostEqual(
@@ -266,6 +305,9 @@ class DiagnosticProbeTest(unittest.TestCase):
                     "seed": 500,
                     "probe_steps": 0,
                     "monitor_parameter_sha256": "hash",
+                    "prefix_hash_to_trigger": "same-prefix",
+                    "prefix_step_count": 0,
+                    "trigger_observation_step": None,
                 },
                 {
                     "episode_id": "scene-500-clean",
@@ -276,6 +318,9 @@ class DiagnosticProbeTest(unittest.TestCase):
                     "seed": 500,
                     "probe_steps": 0,
                     "monitor_parameter_sha256": "hash",
+                    "prefix_hash_to_trigger": "same-prefix",
+                    "prefix_step_count": 0,
+                    "trigger_observation_step": None,
                 },
             ]
             (output / "episodes.jsonl").write_text(
@@ -286,10 +331,7 @@ class DiagnosticProbeTest(unittest.TestCase):
             )
             expected_plan = [
                 {
-                    **{
-                        key: row[key]
-                        for key in ("episode_id", "pair_id", "condition", "seed")
-                    },
+                    **{key: row[key] for key in ("episode_id", "pair_id", "condition", "seed")},
                     "arm": row["arm"],
                 }
                 for row in episodes

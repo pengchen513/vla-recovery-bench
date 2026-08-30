@@ -1,0 +1,230 @@
+{
+  "protocol_version": "1.4",
+  "monitor_protocol_version": "1.0",
+  "relock_version": "1.4",
+  "parent_monitor_protocol": "configs/monitor_relock_v1_3.json",
+  "parent_monitor_protocol_sha256": "e99d78076d885f3135b8b288a10f2b40dd02785b743f1b3e613024255df9bf3c",
+  "supersedes_protocol": "configs/monitor_relock_v1_3.json",
+  "supersedes_protocol_sha256": "e99d78076d885f3135b8b288a10f2b40dd02785b743f1b3e613024255df9bf3c",
+  "source_protocols": {
+    "train": {
+      "path": "configs/monitor_relock_v1_3.json",
+      "sha256": "e99d78076d885f3135b8b288a10f2b40dd02785b743f1b3e613024255df9bf3c"
+    },
+    "calibration": {
+      "path": "self"
+    },
+    "validation": {
+      "path": "self"
+    }
+  },
+  "relock_reason": "Fresh independent calibration and validation data are required after the pilot prefix/schema audit; retain the v1.3 monitor checkpoint and lock entropy only from clean seeds 1200-1249, then verify on clean seeds 1250-1299.",
+  "relock_status": "pre_registered_fresh_threshold_only_relock_before_pilot_reanalysis",
+  "relock_decisions": {
+    "threshold_rule": "retain_v1.1_risk_or_entropy_union_rule",
+    "validation_point_gate": "joint_trigger_rate <= 0.05",
+    "validation_confidence_interval": "clopper_pearson_95_percent_report_only",
+    "calibration_seed_range": [1200, 1249],
+    "validation_seed_range": [1250, 1299],
+    "pilot_seed_range": [500, 511],
+    "pilot_excluded": true,
+    "old_failed_artifacts_retained": true,
+    "write_once_output_paths": true,
+    "monitor_checkpoint_unchanged": true,
+    "monitor_retraining": false,
+    "threshold_selection_source": "fresh_calibration_clean_episodes_only",
+    "validation_source": "fresh_validation_clean_episodes_only",
+    "post_hoc_threshold_tuning": false,
+    "clean_budget_definition": "any_alarm_in_no_injected_fault_episode"
+  },
+  "monitor_retraining": {
+    "enabled": false,
+    "architecture_unchanged": true,
+    "weights_source": "parent_v1_3_checkpoint",
+    "threshold_source": "fresh_calibration_source_only",
+    "policy_parameters_in_model": false
+  },
+  "fresh_data_policy": {
+    "calibration_seed_range": [1200, 1249],
+    "validation_seed_range": [1250, 1299],
+    "pilot_seed_range": [500, 511],
+    "pilot_may_not_be_used_for_threshold_selection": true,
+    "calibration_and_validation_are_disjoint": true,
+    "source_data_collected_after_protocol_freeze": true,
+    "threshold_lock_required_before_any_pilot_reanalysis": true
+  },
+  "status": "pre_registered_training_and_calibration_protocol",
+  "scientific_result": false,
+  "purpose": "train_and_calibrate_a_black_box_fault_conditioned_monitor_before_recovery",
+  "environment": {
+    "id": "robocasa/PickPlaceCounterToCabinet",
+    "split": "target",
+    "embodiment": "PandaOmron",
+    "cameras": [
+      "video.robot0_agentview_left",
+      "video.robot0_agentview_right",
+      "video.robot0_eye_in_hand"
+    ],
+    "horizon": 750,
+    "action_chunk_length": 16
+  },
+  "policy": {
+    "name": "groot_n1_5_robocasa_atomic_seen_30p",
+    "checkpoint_sha256": "fd92aa25425352d5d2f201a49f2186c28a661fdc9c25f494ddf8c91b232d3e52",
+    "frozen": true,
+    "training_or_finetuning": false
+  },
+  "information_boundary": {
+    "allowed_inputs": [
+      "previous_observation",
+      "current_observation",
+      "requested_action_chunk",
+      "bounded_requested_action_history",
+      "task_instruction",
+      "declared_wall_clock_latency"
+    ],
+    "forbidden_inputs": [
+      "fault_type",
+      "fault_schedule",
+      "fault_onset",
+      "fault_duration",
+      "executed_action",
+      "reward",
+      "success",
+      "terminated",
+      "truncated",
+      "info",
+      "mujoco_state",
+      "final_test_labels"
+    ],
+    "raw_observation_fields_must_be_preserved": true,
+    "monitor_does_not_modify_policy": true
+  },
+  "splits": {
+    "unit": "independent_scene_seed",
+    "pilot_seeds": [500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511],
+    "train_scene_seeds": [600, 601, 602, 603, 604, 605, 606, 607, 608, 609, 610, 611, 612, 613, 614, 615, 616, 617, 618, 619, 620, 621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634, 635, 636, 637, 638, 639, 640, 641, 642, 643, 644, 645, 646, 647, 648, 649, 650, 651, 652, 653, 654, 655, 656, 657, 658, 659, 660, 661, 662, 663, 664, 665, 666, 667, 668, 669, 670, 671, 672, 673, 674, 675, 676, 677, 678, 679, 680, 681, 682, 683, 684, 685, 686, 687, 688, 689, 690, 691, 692, 693, 694, 695, 696, 697, 698, 699],
+    "calibration_scene_seeds": [1200, 1201, 1202, 1203, 1204, 1205, 1206, 1207, 1208, 1209, 1210, 1211, 1212, 1213, 1214, 1215, 1216, 1217, 1218, 1219, 1220, 1221, 1222, 1223, 1224, 1225, 1226, 1227, 1228, 1229, 1230, 1231, 1232, 1233, 1234, 1235, 1236, 1237, 1238, 1239, 1240, 1241, 1242, 1243, 1244, 1245, 1246, 1247, 1248, 1249],
+    "validation_scene_seeds": [1250, 1251, 1252, 1253, 1254, 1255, 1256, 1257, 1258, 1259, 1260, 1261, 1262, 1263, 1264, 1265, 1266, 1267, 1268, 1269, 1270, 1271, 1272, 1273, 1274, 1275, 1276, 1277, 1278, 1279, 1280, 1281, 1282, 1283, 1284, 1285, 1286, 1287, 1288, 1289, 1290, 1291, 1292, 1293, 1294, 1295, 1296, 1297, 1298, 1299],
+    "final_test_scene_seeds": [900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915, 916, 917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929]
+  },
+  "fault_sampling": {
+    "mechanisms": ["clean", "actuator_fault", "observation_fault"],
+    "clean_training_fraction": 0.5,
+    "fault_training_fraction_equal_between_mechanisms": true,
+    "onset_steps": [80, 160, 240, 320, 400],
+    "duration_steps": [4, 8, 16],
+    "actuator_variants": ["arm_only", "base_only", "gripper_only", "hold_last", "intermittent"],
+    "observation_variants": ["partial_mask", "blur", "stale_frame", "color_shift"],
+    "camera_variants": [
+      "video.robot0_agentview_left",
+      "video.robot0_agentview_right",
+      "video.robot0_eye_in_hand",
+      "two_camera_correlated"
+    ],
+    "all_zero_shortcut_role": "diagnostic_only_not_training_or_primary_test",
+    "natural_failure_labels": false
+  },
+  "collection_design": {
+    "conditions_per_scene_seed": ["clean", "actuator_fault", "observation_fault"],
+    "paired_factor_row_across_fault_mechanisms": true,
+    "execution_order": "sha256(monitor_protocol_version|split|episode_id)",
+    "factor_assignment": "deterministic_marginally_balanced_sha256_permutation",
+    "camera_variant_map": {
+      "video.robot0_agentview_left": ["video.robot0_agentview_left"],
+      "video.robot0_agentview_right": ["video.robot0_agentview_right"],
+      "video.robot0_eye_in_hand": ["video.robot0_eye_in_hand"],
+      "two_camera_correlated": ["video.robot0_agentview_left", "video.robot0_agentview_right"]
+    },
+    "early_termination_before_exposure": "retain_as_not_exposed_attrition",
+    "sample_weighting": "clean_rows_weighted_to_0.5_then_equal_fault_mechanism_weight"
+  },
+  "storage": {
+    "raw_contract_validation": "exact_all_declared_fields_required",
+    "camera_representation": "deterministic_8x8_rgb_area_pool",
+    "camera_representation_is_model_input_not_raw_archive": true,
+    "state_representation": "all_declared_fields_concatenated_in_manifest_order",
+    "requested_action_representation": "complete_16x12_chunk_and_current_structured_action",
+    "instruction_representation": "lossless_utf8_bytes_up_to_256",
+    "monitor_inputs_artifact": "monitor_inputs.h5",
+    "offline_labels_artifact": "offline_labels.h5",
+    "privileged_audit_is_separate": true
+  },
+  "model": {
+    "name": "fault_conditioned_action_observation_monitor",
+    "track": "black_box",
+    "input_window_steps": 16,
+    "architecture": "temporal_encoder_plus_two_mechanism_heads_and_risk_head",
+    "mechanism_classes": ["none", "actuator_fault", "observation_fault"],
+    "risk_output": true,
+    "posterior_output": true,
+    "calibration_method": "split_conformal_or_declared_probability_calibration",
+    "random_seed": 14042026,
+    "no_policy_parameters": true
+  },
+  "training": {
+    "labels_allowed_during_training": ["episode_mechanism", "offline_exposure_window", "task_success"],
+    "labels_forbidden_during_online_inference": ["episode_mechanism", "offline_exposure_window", "task_success"],
+    "row_target_rule": "none_outside_exposure_otherwise_episode_mechanism",
+    "early_stopping_source": "validation_scene_seeds_only",
+    "hyperparameter_selection_source": "train_and_validation_only",
+    "final_test_access_before_lock": false,
+    "checkpoint_write_once": true,
+    "parameter_hash_before_after_policy": true
+  },
+  "formal_shard_integrity": {
+    "schema_version": "monitor-shard-integrity-v1",
+    "required_before_training": true,
+    "require_exact_partition_seed_coverage": true,
+    "require_three_conditions_per_seed": true,
+    "require_cross_shard_seed_disjointness": true,
+    "require_file_sha256": true,
+    "require_clean_repository": true,
+    "require_identical_provenance": true,
+    "require_full_horizon": true
+  },
+  "calibration": {
+    "source": "calibration_scene_seeds_only",
+    "clean_false_intervention_budget": {
+      "episode_rate_max": 0.05,
+      "per_1000_steps_report_required": true,
+      "componentwise_cost_limits_required": true
+    },
+    "threshold_lock_before_final_test": true,
+    "sequential_dependence_note_required": true
+  },
+  "primary_monitor_evaluation": {
+    "final_test_source": "final_test_scene_seeds_only",
+    "primary_operating_point": "calibration_locked_clean_budget",
+    "endpoints": [
+      "risk_early_warning_at_fixed_clean_budget",
+      "mechanism_macro_f1_on_hard_exposed_windows",
+      "exposure_window_detection_recall",
+      "clean_false_intervention_rate"
+    ],
+    "recovery_intervention": "disabled",
+    "common_prefix_branch": "not_required_for_monitor_only_phase"
+  },
+  "artifacts": {
+    "manifest": "run_manifest.json",
+    "dataset_index": "dataset_index.jsonl",
+    "monitor_inputs": "monitor_inputs.h5",
+    "offline_labels": "offline_labels.h5",
+    "monitor_checkpoint": "monitor.npz",
+    "monitor_sha256": "monitor.sha256",
+    "calibration": "calibration.json",
+    "metrics": "metrics.json",
+    "software_versions": "software_versions.json",
+    "policy_state_before_after": "policy_state.json",
+    "audit_stream": "audit_stream.jsonl",
+    "shard_integrity": "shard_integrity.json",
+    "validation": "artifact_validation.json"
+  },
+  "gates": {
+    "pilot_source_is_not_training_data": true,
+    "no_final_test_label_reuse": true,
+    "no_recovery_before_monitor_gate": true,
+    "monitor_gate_requires_clean_budget_and_held_out_metrics": true,
+    "diagnostic_probe_required_if_passive_not_identifiable": true
+  }
+}

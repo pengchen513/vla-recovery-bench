@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -124,14 +125,46 @@ def validate_pilot_artifacts(
 
     episodes = load_jsonl("episodes.jsonl")
     monitor = load_jsonl("monitor_stream.jsonl")
-    audit = load_jsonl("audit_stream.jsonl")
+
+    # The v1.4 diagnostic runner deliberately renamed the privileged channel
+    # to make its separation from the online monitor channel explicit.  Keep
+    # the old name as a backwards-compatible input for the original pilot
+    # runner, but never require both files or silently treat one schema as the
+    # other.
+    canonical_audit = output / "privileged_audit.jsonl"
+    if canonical_audit.is_file():
+        audit_name = "privileged_audit.jsonl"
+    else:
+        audit_name = "audit_stream.jsonl"
+    audit = load_jsonl(audit_name)
     if len(episodes) != expected_episode_count:
         errors.append(
             f"episodes.jsonl has {len(episodes)} records; expected {expected_episode_count}"
         )
-    episode_ids = [str(record.get("episode_id")) for record in episodes]
-    if len(set(episode_ids)) != len(episode_ids):
-        errors.append("episodes.jsonl contains duplicate episode_id values")
+    # A diagnostic pair intentionally has the same episode_id in its passive
+    # and probe arms.  Uniqueness is therefore (episode_id, arm) for the v1.4
+    # schema, while legacy single-arm pilots retain episode_id uniqueness.
+    has_arm = any("arm" in record for record in episodes)
+    if has_arm:
+        keys = [(str(record.get("episode_id")), str(record.get("arm", ""))) for record in episodes]
+        if any(not arm for _, arm in keys):
+            errors.append("dual-arm episodes.jsonl contains a record without arm")
+        if len(set(keys)) != len(keys):
+            errors.append("episodes.jsonl contains duplicate episode_id/arm pairs")
+        pair_arms: dict[str, set[str]] = defaultdict(set)
+        for record in episodes:
+            pair_arms[str(record.get("pair_id", record.get("episode_id")))].add(
+                str(record.get("arm", ""))
+            )
+        for pair_id, arms in pair_arms.items():
+            if arms != {"passive_only", "passive_plus_probe"}:
+                errors.append(
+                    f"pair {pair_id} does not contain both diagnostic arms: {sorted(arms)}"
+                )
+    else:
+        episode_ids = [str(record.get("episode_id")) for record in episodes]
+        if len(set(episode_ids)) != len(episode_ids):
+            errors.append("episodes.jsonl contains duplicate episode_id values")
     conditions = [record.get("condition") for record in episodes]
     expected_per_condition = expected_episode_count // len(CONDITIONS)
     for condition in CONDITIONS:
@@ -176,7 +209,7 @@ def validate_pilot_artifacts(
             )
             break
     if not audit:
-        errors.append("audit_stream.jsonl contains no records")
+        errors.append(f"{audit_name} contains no records")
 
     before = load_json("policy_state_before.json")
     after = load_json("policy_state_after.json")

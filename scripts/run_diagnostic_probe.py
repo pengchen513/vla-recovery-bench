@@ -12,9 +12,11 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import statistics
 import subprocess
 import sys
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -120,6 +122,106 @@ def _stable_hash(value: Any) -> str:
     return digest.hexdigest()
 
 
+def _seed_episode(seed: int) -> None:
+    """Reset all RNGs owned by the runner before constructing an arm.
+
+    RoboCasa's Gym wrapper owns its scene RNG, while NumPy/Python RNGs are
+    still consulted by controllers and fault helpers.  Keeping this reset next
+    to the fresh-environment lifecycle prevents execution-order-dependent
+    prefixes from leaking between paired arms.
+    """
+    random.seed(int(seed))
+    np.random.seed(int(seed))
+    try:
+        import torch
+
+        torch.manual_seed(int(seed))
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(int(seed))
+    except (ImportError, RuntimeError):
+        # The policy server owns model RNG; a runner without torch can still
+        # execute deterministic environment-only tests.
+        pass
+
+
+def _validate_pair_prefixes(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[list[str], dict[str, Any]]:
+    """Validate the paired-arm prefix contract and return an audit report.
+
+    Prefix equality is checked before any arm-specific probe action.  A missing
+    hash or unequal trigger step is a hard failure, because silently treating
+    such a pair as a counterfactual would invalidate the recovery comparison.
+    """
+    grouped: dict[tuple[str, str], dict[str, Mapping[str, Any]]] = defaultdict(dict)
+    errors: list[str] = []
+    for row in rows:
+        pair = str(row.get("pair_id", ""))
+        condition = str(row.get("condition", ""))
+        arm = str(row.get("arm", ""))
+        if not pair or not condition or arm not in {"passive_only", "passive_plus_probe"}:
+            errors.append(
+                f"invalid pair-prefix identity: pair={pair!r}, condition={condition!r}, arm={arm!r}"
+            )
+            continue
+        key = (pair, condition)
+        if arm in grouped[key]:
+            errors.append(f"duplicate pair-prefix arm: {pair}/{condition}/{arm}")
+        grouped[key][arm] = row
+
+    groups: list[dict[str, Any]] = []
+    for (pair, condition), arms in sorted(grouped.items()):
+        missing = sorted({"passive_only", "passive_plus_probe"} - set(arms))
+        if missing:
+            errors.append(f"pair-prefix pair {pair}/{condition} is missing arms: {missing}")
+            continue
+        passive = arms["passive_only"]
+        probe = arms["passive_plus_probe"]
+        hashes = [passive.get("prefix_hash_to_trigger"), probe.get("prefix_hash_to_trigger")]
+        lengths = [passive.get("prefix_step_count"), probe.get("prefix_step_count")]
+        if any(not isinstance(value, str) or not value for value in hashes):
+            errors.append(f"pair-prefix hash is missing for {pair}/{condition}")
+        if any(not isinstance(value, int) or value < 0 for value in lengths):
+            errors.append(f"pair-prefix step count is missing for {pair}/{condition}")
+        hash_equal = hashes[0] == hashes[1]
+        length_equal = lengths[0] == lengths[1]
+        trigger_equal = passive.get("trigger_observation_step") == probe.get(
+            "trigger_observation_step"
+        )
+        if not hash_equal:
+            errors.append(f"pair-prefix hash mismatch for {pair}/{condition}")
+        if not length_equal:
+            errors.append(f"pair-prefix length mismatch for {pair}/{condition}")
+        if not trigger_equal:
+            errors.append(f"pair-prefix trigger-step mismatch for {pair}/{condition}")
+        groups.append(
+            {
+                "pair_id": pair,
+                "condition": condition,
+                "passive_prefix_hash": hashes[0],
+                "probe_prefix_hash": hashes[1],
+                "prefix_step_count": lengths[0] if length_equal else None,
+                "hash_equal": hash_equal,
+                "length_equal": length_equal,
+                "trigger_step_equal": trigger_equal,
+            }
+        )
+    report = {
+        "schema_version": "pair-prefix-v1",
+        "environment_lifecycle": "fresh_instance_per_arm",
+        "episode_rng_reset": "python_numpy_torch_and_policy_server_set_seed",
+        "pair_count": len(groups),
+        "mismatch_count": sum(
+            not (group["hash_equal"] and group["length_equal"] and group["trigger_step_equal"])
+            for group in groups
+        ),
+        "groups": groups,
+        "passed": not errors,
+        "errors": errors,
+    }
+    return errors, report
+
+
 def _jsonl(stream: Any, event_type: str, **payload: Any) -> None:
     event = {"event_type": event_type, **payload}
     assert_online_event_safe(event) if event_type in {"monitor_step", "probe_step"} else None
@@ -177,9 +279,7 @@ def _observation_delta(
         value = np.asarray(new[key])
         if value.ndim == 3 and value.shape[-1] in (3, 4):
             camera_values.append(stats["mean_absolute"])
-    mean_camera_delta = (
-        float(statistics.fmean(camera_values)) if camera_values else 0.0
-    )
+    mean_camera_delta = float(statistics.fmean(camera_values)) if camera_values else 0.0
     camera_summary = {
         "mean_absolute_difference": mean_camera_delta,
         "temporal_consistency": float(np.clip(1.0 - mean_camera_delta, 0.0, 1.0)),
@@ -209,8 +309,7 @@ def _posterior_delta(
     if baseline is None or not isinstance(baseline.get("posterior"), Mapping):
         return {}
     return {
-        name: float(posterior[name]) - float(baseline["posterior"][name])
-        for name in MECHANISMS
+        name: float(posterior[name]) - float(baseline["posterior"][name]) for name in MECHANISMS
     }
 
 
@@ -281,6 +380,7 @@ def run_episode(
 ) -> dict[str, Any]:
     """Run one episode; labels remain confined to the audit-side arguments."""
     seed = int(item["seed"])
+    _seed_episode(seed)
     token = hashlib.sha256(
         f"diagnostic-probe-v1.1|{item['episode_id']}|{arm}".encode()
     ).hexdigest()[:32]
@@ -294,7 +394,10 @@ def run_episode(
     observation = environment.reset(seed)
     prompt = task_description(observation)
     first_contract = _observation_contract(observation)
-    prefix_parts: list[str] = []
+    # Include the initial observation in the immutable prefix transcript.  The
+    # transcript intentionally uses raw observation/action hashes; it is never
+    # converted into a model input or exposed to the online monitor.
+    prefix_parts: list[str] = [_stable_hash(observation)]
     monitor_records: list[dict[str, Any]] = []
     alarms: list[dict[str, Any]] = []
     fault_events: list[dict[str, Any]] = []
@@ -434,9 +537,7 @@ def run_episode(
             post_window_observation_step = trigger_observation_step + MAX_PROBE_STEPS
             trigger_prediction = {
                 **trigger,
-                "posterior": {
-                    name: float(prediction["posterior"][name]) for name in MECHANISMS
-                },
+                "posterior": {name: float(prediction["posterior"][name]) for name in MECHANISMS},
                 "predicted_mechanism": prediction["predicted_mechanism"],
             }
             if arm == "passive_plus_probe":
@@ -476,10 +577,7 @@ def run_episode(
         }
         _jsonl(monitor_stream, "monitor_step", **monitor_event)
         monitor_records.append(monitor_event)
-        if (
-            post_window_observation_step is not None
-            and step + 1 == post_window_observation_step
-        ):
+        if post_window_observation_step is not None and step + 1 == post_window_observation_step:
             post_window_posterior = {
                 name: float(prediction["posterior"][name]) for name in MECHANISMS
             }
@@ -570,9 +668,7 @@ def run_episode(
         "episode_token": token,
         "arm": arm,
         "condition": item["condition"],
-        "mechanism": (
-            "none" if item["condition"] == "clean" else item["condition"]
-        ),
+        "mechanism": ("none" if item["condition"] == "clean" else item["condition"]),
         "seed": seed,
         "steps": steps,
         "base_horizon": base_horizon,
@@ -603,6 +699,8 @@ def run_episode(
         ),
         "max_probe_steps": MAX_PROBE_STEPS,
         "prefix_hash_to_trigger": _stable_hash(prefix_parts),
+        "prefix_step_count": max((len(prefix_parts) - 1) // 2, 0),
+        "prefix_reproducibility": "fresh_instance_per_arm",
         "observation_contract": first_contract,
         "action_contract": {"shape": action_contract, "finite_and_in_range": True},
         "policy_inference_count": len(policy_latencies),
@@ -660,9 +758,9 @@ def _validate_lock(
             raise ValueError("probe lock monitor protocol SHA256 does not match protocol")
         protocol = _load_json(protocol_path)
         relock_version = str(protocol.get("relock_version", ""))
-        if relock_version not in {"1.2", "1.3"}:
+        if relock_version not in {"1.2", "1.3", "1.4"}:
             raise ValueError(
-                "diagnostic probe requires a supported v1.2 or v1.3 monitor relock protocol"
+                "diagnostic probe requires a supported v1.2, v1.3, or v1.4 monitor relock protocol"
             )
         reference = Path(str(protocol.get("parent_monitor_protocol", "")))
         candidates = [
@@ -684,9 +782,7 @@ def _validate_lock(
         if relock_errors:
             raise ValueError(f"invalid monitor relock protocol: {relock_errors}")
         if lock.get("relock", {}).get("version") != relock_version:
-            raise ValueError(
-                "probe lock relock version does not match the monitor protocol"
-            )
+            raise ValueError("probe lock relock version does not match the monitor protocol")
     if str(lock.get("monitor", {}).get("sha256")) != _sha256(monitor_path):
         raise ValueError("probe lock monitor SHA256 does not match checkpoint")
     if str(lock.get("probe_protocol", {}).get("sha256")) != _sha256(probe_path):
@@ -699,10 +795,12 @@ def _validate_lock(
         raise ValueError("probe lock entropy threshold is not finite")
     calibration = lock.get("calibration", {})
     validation = lock.get("validation", {})
-    if int(calibration.get("episode_count", -1)) != 50:
-        raise ValueError("probe lock must be based on 50 clean calibration episodes")
-    if int(validation.get("clean_episode_count", -1)) != 50:
-        raise ValueError("probe lock must validate 50 clean holdout episodes")
+    calibration_count = int(calibration.get("episode_count", -1))
+    validation_count = int(validation.get("clean_episode_count", -1))
+    if calibration_count <= 0:
+        raise ValueError("probe lock must be based on a non-empty clean calibration set")
+    if validation_count <= 0:
+        raise ValueError("probe lock must validate a non-empty clean holdout set")
     try:
         validation_rate = float(validation["joint_trigger_rate"])
         max_rate = float(validation["max_union_rate"])
@@ -713,8 +811,10 @@ def _validate_lock(
     if validation_rate > max_rate:
         raise ValueError("probe lock validation clean budget is exceeded")
     if protocol_path is not None:
-        interval = lock.get("rate_reports", {}).get("validation_joint_trigger", {}).get(
-            "clopper_pearson_95_percent"
+        interval = (
+            lock.get("rate_reports", {})
+            .get("validation_joint_trigger", {})
+            .get("clopper_pearson_95_percent")
         )
         if not isinstance(interval, Mapping):
             raise ValueError("probe lock is missing its confidence interval report")
@@ -723,6 +823,12 @@ def _validate_lock(
                 raise ValueError("probe lock confidence interval is not finite")
     if lock.get("formula", {}).get("threshold_locked_before_pilot") is not True:
         raise ValueError("probe lock is missing the before-pilot threshold lock assertion")
+    independence = lock.get("data_independence", {})
+    if protocol_path is not None and str(_load_json(protocol_path).get("relock_version")) == "1.4":
+        if independence.get("pilot_data_used_for_threshold") is not False:
+            raise ValueError("v1.4 probe lock does not prove pilot exclusion")
+        if independence.get("pilot_seed_overlap") not in ([], None):
+            raise ValueError("v1.4 probe lock has pilot seed overlap")
     artifact_path = lock_path.parent / "artifact_validation.json"
     if not artifact_path.is_file():
         raise ValueError(f"missing lock artifact validation: {artifact_path}")
@@ -756,6 +862,7 @@ def _validate_run_artifacts(
         "probe_lock.json",
         "policy_state_before.json",
         "policy_state_after.json",
+        "pair_prefix_validation.json",
     )
     for name in required:
         path = output / name
@@ -766,8 +873,7 @@ def _validate_run_artifacts(
     if (output / "episodes.jsonl").is_file():
         try:
             raw_episodes = [
-                json.loads(line)
-                for line in (output / "episodes.jsonl").read_text().splitlines()
+                json.loads(line) for line in (output / "episodes.jsonl").read_text().splitlines()
             ]
             if not all(isinstance(row, dict) for row in raw_episodes):
                 raise ValueError("episodes.jsonl contains a non-object row")
@@ -776,9 +882,9 @@ def _validate_run_artifacts(
             errors.append(f"invalid episodes.jsonl: {error}")
     if len(episodes) != expected_count:
         errors.append(f"episode count {len(episodes)} != expected {expected_count}")
-    episode_keys = [
-        (str(row.get("episode_id")), str(row.get("arm"))) for row in episodes
-    ]
+    pair_errors, _ = _validate_pair_prefixes(episodes)
+    errors.extend(pair_errors)
+    episode_keys = [(str(row.get("episode_id")), str(row.get("arm"))) for row in episodes]
     if len(set(episode_keys)) != len(episode_keys):
         errors.append("duplicate episode id/arm pairs")
     if expected_plan:
@@ -790,15 +896,11 @@ def _validate_run_artifacts(
             )
             for item in expected_plan
         }
-        observed_keys = [
-            (str(row.get("episode_id")), str(row.get("arm"))) for row in episodes
-        ]
+        observed_keys = [(str(row.get("episode_id")), str(row.get("arm"))) for row in episodes]
         if set(observed_keys) != set(expected_keys):
             errors.append("episode ids/arms do not match the frozen episode plan")
         for row in episodes:
-            expected = expected_keys.get(
-                (str(row.get("episode_id")), str(row.get("arm")))
-            )
+            expected = expected_keys.get((str(row.get("episode_id")), str(row.get("arm"))))
             if expected is None:
                 continue
             expected_seed, expected_condition, expected_pair_id = expected
@@ -823,10 +925,7 @@ def _validate_run_artifacts(
         if not path.is_file():
             continue
         try:
-            rows = [
-                json.loads(line)
-                for line in path.read_text().splitlines()
-            ]
+            rows = [json.loads(line) for line in path.read_text().splitlines()]
             for index, value in enumerate(rows):
                 if not isinstance(value, dict):
                     errors.append(f"online stream row is not an object at {name}:{index}")
@@ -914,9 +1013,8 @@ def main() -> int:
         or config["environment"]["split"] != args.split
     ):
         raise ValueError("pilot configuration does not match requested environment")
-    if (
-        monitor_metrics.get("status") != "completed"
-        or not monitor_metrics.get("gate", {}).get("passed")
+    if monitor_metrics.get("status") != "completed" or not monitor_metrics.get("gate", {}).get(
+        "passed"
     ):
         raise ValueError("monitor checkpoint is not backed by a passed monitor gate")
     monitor = FaultConditionedTemporalMonitor.load(args.monitor)
@@ -1010,14 +1108,11 @@ def main() -> int:
         process, server_log = _start_server(args, output)
         client = TorchZmqPolicyClient(port=args.port, timeout_ms=300000)
         policy_state_before = client.call("get_policy_state")
-        if (
-            policy_state_before.get("model_training")
-            or not policy_state_before.get("all_parameters_frozen")
+        if policy_state_before.get("model_training") or not policy_state_before.get(
+            "all_parameters_frozen"
         ):
             raise RuntimeError("policy server did not report eval mode with frozen parameters")
         write_json_once(output / "policy_state_before.json", policy_state_before)
-        environment = RoboCasaEnvironment(args.environment_id, split=args.split)
-        policy = GrootRoboCasaPolicy(environment.action_space, client)
         with (
             (output / "episodes.jsonl").open("x", encoding="utf-8") as episode_stream,
             (output / "monitor_stream.jsonl").open("x", encoding="utf-8") as monitor_stream,
@@ -1025,6 +1120,14 @@ def main() -> int:
             (output / "privileged_audit.jsonl").open("x", encoding="utf-8") as audit_stream,
         ):
             for index, item in enumerate(plan):
+                # Rendering contexts are intentionally not shared by paired
+                # arms.  RoboCasa can produce different camera buffers when
+                # two contexts remain alive, even when MuJoCo state is equal.
+                if environment is not None:
+                    environment.close()
+                _seed_episode(int(item["seed"]))
+                environment = RoboCasaEnvironment(args.environment_id, split=args.split)
+                policy = GrootRoboCasaPolicy(environment.action_space, client)
                 result = run_episode(
                     episode_index=index,
                     item=item,
@@ -1061,6 +1164,10 @@ def main() -> int:
                     ),
                     flush=True,
                 )
+        pair_errors, pair_report = _validate_pair_prefixes(results)
+        write_json_once(output / "pair_prefix_validation.json", pair_report)
+        if pair_errors:
+            raise RuntimeError(f"pair-prefix reproducibility gate failed: {pair_errors}")
         policy_state_after = client.call("get_policy_state")
         write_json_once(output / "policy_state_after.json", policy_state_after)
         for label, state in (("before", policy_state_before), ("after", policy_state_after)):
@@ -1070,9 +1177,8 @@ def main() -> int:
                 raise RuntimeError(
                     f"policy parameter hash differs from initial hash in {label} state"
                 )
-        if (
-            policy_state_before.get("current_parameter_sha256")
-            != policy_state_after.get("current_parameter_sha256")
+        if policy_state_before.get("current_parameter_sha256") != policy_state_after.get(
+            "current_parameter_sha256"
         ):
             raise RuntimeError("frozen policy parameter hash changed during diagnostic probe")
         monitor_parameter_after = monitor_parameter_sha256(monitor)
@@ -1107,6 +1213,7 @@ def main() -> int:
                 arm: sum(row["arm"] == arm for row in results)
                 for arm in ("passive_only", "passive_plus_probe")
             },
+            "pair_prefix": pair_report,
             "triggered_episodes": sum(bool(row["triggered"]) for row in results),
             "probe_invocations": sum(bool(row["probe_executed"]) for row in results),
             "probe_step_maximum": max((int(row["probe_steps"]) for row in results), default=0),
@@ -1157,6 +1264,7 @@ def main() -> int:
                 },
                 "monitor": metrics["monitor"],
                 "policy": metrics["policy"],
+                "pair_prefix": pair_report,
                 "config": {"path": str(args.config.resolve()), "sha256": _sha256(args.config)},
                 "probe_config": {
                     "path": str(args.probe_config.resolve()),

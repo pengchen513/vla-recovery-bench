@@ -78,6 +78,67 @@ class PilotPlanTest(unittest.TestCase):
             errors = validate_pilot_artifacts(output, expected_episode_count=3)
             self.assertTrue(any("leaks fields" in error for error in errors))
 
+    def test_artifact_validator_accepts_v14_dual_arm_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            required_json = {
+                "run_manifest.json": {
+                    "protocol_version": "1.4",
+                    "environment": {},
+                    "policy": {},
+                    "monitor": {},
+                    "seeds": [1],
+                    "episode_plan": [{} for _ in range(6)],
+                },
+                "metrics.json": {"status": "completed", "episode_count": 6},
+                "monitor_config.json": {},
+                "calibration.json": {},
+                "software_versions.json": {},
+                "policy_state_before.json": {
+                    "current_parameter_sha256": "same",
+                    "model_training": False,
+                    "all_parameters_frozen": True,
+                },
+                "policy_state_after.json": {
+                    "current_parameter_sha256": "same",
+                    "model_training": False,
+                    "all_parameters_frozen": True,
+                },
+            }
+            for name, value in required_json.items():
+                (output / name).write_text(json.dumps(value), encoding="utf-8")
+            rows = []
+            monitor_rows = []
+            for condition in ("clean", "actuator_fault", "observation_fault"):
+                episode_id = f"scene-1-{condition}"
+                for arm in ("passive_only", "passive_plus_probe"):
+                    token = f"{condition}-{arm}"
+                    rows.append(
+                        {
+                            "episode_id": episode_id,
+                            "pair_id": "scene-1",
+                            "condition": condition,
+                            "arm": arm,
+                            "episode_token": token,
+                        }
+                    )
+                    monitor_rows.append(
+                        {
+                            "episode_token": token,
+                            "chunk": {"chunk_length": 1},
+                            "requested_action_chunk": [{}],
+                        }
+                    )
+            (output / "episodes.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+            )
+            (output / "monitor_stream.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in monitor_rows), encoding="utf-8"
+            )
+            (output / "privileged_audit.jsonl").write_text("{}\n", encoding="utf-8")
+            errors = validate_pilot_artifacts(output, expected_episode_count=6)
+            self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

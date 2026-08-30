@@ -17,18 +17,11 @@ ROOT = Path(__file__).parents[1]
 
 class MonitorProtocolTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = json.loads(
-            (ROOT / "configs/monitor_training_v1_0.json").read_text()
-        )
-        self.probe = json.loads(
-            (ROOT / "configs/diagnostic_probe_v1_0.json").read_text()
-        )
-        self.relock = json.loads(
-            (ROOT / "configs/monitor_relock_v1_2.json").read_text()
-        )
-        self.relock_v13 = json.loads(
-            (ROOT / "configs/monitor_relock_v1_3.json").read_text()
-        )
+        self.config = json.loads((ROOT / "configs/monitor_training_v1_0.json").read_text())
+        self.probe = json.loads((ROOT / "configs/diagnostic_probe_v1_0.json").read_text())
+        self.relock = json.loads((ROOT / "configs/monitor_relock_v1_2.json").read_text())
+        self.relock_v13 = json.loads((ROOT / "configs/monitor_relock_v1_3.json").read_text())
+        self.relock_v14 = json.loads((ROOT / "configs/monitor_relock_v1_4.json").read_text())
 
     def test_checked_in_monitor_and_probe_protocols_pass(self) -> None:
         self.assertEqual(validate_monitor_protocol(self.config), [])
@@ -44,12 +37,8 @@ class MonitorProtocolTest(unittest.TestCase):
             ),
             [],
         )
-        self.assertEqual(
-            self.relock["splits"]["calibration_scene_seeds"], list(range(1000, 1050))
-        )
-        self.assertEqual(
-            self.relock["splits"]["validation_scene_seeds"], list(range(1100, 1150))
-        )
+        self.assertEqual(self.relock["splits"]["calibration_scene_seeds"], list(range(1000, 1050)))
+        self.assertEqual(self.relock["splits"]["validation_scene_seeds"], list(range(1100, 1150)))
 
     def test_relock_rejects_parent_hash_or_feature_drift(self) -> None:
         parent_hash = hashlib.sha256(
@@ -83,9 +72,7 @@ class MonitorProtocolTest(unittest.TestCase):
         self.assertEqual(
             self.relock_v13["splits"]["validation_scene_seeds"], list(range(1150, 1200))
         )
-        self.assertEqual(
-            self.relock_v13["source_protocols"]["validation"]["path"], "self"
-        )
+        self.assertEqual(self.relock_v13["source_protocols"]["validation"]["path"], "self")
 
     def test_v13_relock_rejects_source_or_retraining_drift(self) -> None:
         parent_hash = hashlib.sha256(
@@ -104,6 +91,29 @@ class MonitorProtocolTest(unittest.TestCase):
         )
         self.assertTrue(any("monitor_retraining" in error for error in errors))
 
+    def test_v14_relock_is_fresh_threshold_only_and_pilot_excluded(self) -> None:
+        parent_path = ROOT / "configs/monitor_relock_v1_3.json"
+        parent = json.loads(parent_path.read_text())
+        parent_hash = hashlib.sha256(parent_path.read_bytes()).hexdigest()
+        self.assertEqual(
+            validate_monitor_relock_protocol(
+                self.relock_v14,
+                parent_config=parent,
+                parent_sha256=parent_hash,
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.relock_v14["splits"]["calibration_scene_seeds"], list(range(1200, 1250))
+        )
+        self.assertEqual(
+            self.relock_v14["splits"]["validation_scene_seeds"], list(range(1250, 1300))
+        )
+        self.assertTrue(
+            self.relock_v14["fresh_data_policy"]["pilot_may_not_be_used_for_threshold_selection"]
+        )
+        self.assertFalse(self.relock_v14["monitor_retraining"]["enabled"])
+
     def test_seed_splits_are_disjoint_and_final_test_is_not_collectable(self) -> None:
         self.config["splits"]["final_test_scene_seeds"][0] = self.config["splits"][
             "train_scene_seeds"
@@ -120,9 +130,7 @@ class MonitorProtocolTest(unittest.TestCase):
             rows = [item for item in plan if item["seed"] == seed]
             self.assertEqual({item["condition"] for item in rows}, set(CONDITIONS))
             actuator = next(item for item in rows if item["condition"] == "actuator_fault")
-            observation = next(
-                item for item in rows if item["condition"] == "observation_fault"
-            )
+            observation = next(item for item in rows if item["condition"] == "observation_fault")
             self.assertEqual(actuator["factor_row"], observation["factor_row"])
             onset = actuator["factor_row"]["onset_step"]
             self.assertEqual(actuator["faults"][0].step, onset)

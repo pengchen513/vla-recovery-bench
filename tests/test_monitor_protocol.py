@@ -26,6 +26,9 @@ class MonitorProtocolTest(unittest.TestCase):
         self.relock = json.loads(
             (ROOT / "configs/monitor_relock_v1_2.json").read_text()
         )
+        self.relock_v13 = json.loads(
+            (ROOT / "configs/monitor_relock_v1_3.json").read_text()
+        )
 
     def test_checked_in_monitor_and_probe_protocols_pass(self) -> None:
         self.assertEqual(validate_monitor_protocol(self.config), [])
@@ -64,6 +67,42 @@ class MonitorProtocolTest(unittest.TestCase):
             changed_feature, parent_config=self.config, parent_sha256=parent_hash
         )
         self.assertTrue(any("changed fields beyond" in error for error in errors))
+
+    def test_v13_relock_declares_sources_and_fresh_holdout(self) -> None:
+        parent_hash = hashlib.sha256(
+            (ROOT / "configs/monitor_training_v1_0.json").read_bytes()
+        ).hexdigest()
+        self.assertEqual(
+            validate_monitor_relock_protocol(
+                self.relock_v13,
+                parent_config=self.config,
+                parent_sha256=parent_hash,
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.relock_v13["splits"]["validation_scene_seeds"], list(range(1150, 1200))
+        )
+        self.assertEqual(
+            self.relock_v13["source_protocols"]["validation"]["path"], "self"
+        )
+
+    def test_v13_relock_rejects_source_or_retraining_drift(self) -> None:
+        parent_hash = hashlib.sha256(
+            (ROOT / "configs/monitor_training_v1_0.json").read_bytes()
+        ).hexdigest()
+        changed = json.loads(json.dumps(self.relock_v13))
+        changed["source_protocols"]["calibration"]["sha256"] = "0" * 64
+        errors = validate_monitor_relock_protocol(
+            changed, parent_config=self.config, parent_sha256=parent_hash
+        )
+        self.assertTrue(any("approved source" in error for error in errors))
+        changed = json.loads(json.dumps(self.relock_v13))
+        changed["monitor_retraining"]["epochs"] = 79
+        errors = validate_monitor_relock_protocol(
+            changed, parent_config=self.config, parent_sha256=parent_hash
+        )
+        self.assertTrue(any("monitor_retraining" in error for error in errors))
 
     def test_seed_splits_are_disjoint_and_final_test_is_not_collectable(self) -> None:
         self.config["splits"]["final_test_scene_seeds"][0] = self.config["splits"][

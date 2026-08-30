@@ -1115,6 +1115,235 @@ def validate_formal_shard_set(
     return report
 
 
+def _resolve_protocol_reference(reference: str | Path, *, relative_to: Path) -> Path:
+    """Resolve a repository-relative protocol reference without changing files."""
+    candidate = Path(reference)
+    candidates = (
+        candidate,
+        relative_to / candidate,
+        relative_to.parent / candidate,
+    )
+    for path in candidates:
+        if path.is_file():
+            return path.resolve()
+    return (relative_to / candidate).resolve()
+
+
+def _protocol_contract(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Return fields that must remain identical across monitor data sources."""
+    # Relock metadata and scene-seed assignments are intentionally allowed to
+    # differ.  The remaining fields define the observation, fault, model, and
+    # storage contract that makes rows comparable across source protocols.
+    fields = (
+        "protocol_version",
+        "monitor_protocol_version",
+        "environment",
+        "policy",
+        "information_boundary",
+        "fault_sampling",
+        "collection_design",
+        "storage",
+        "model",
+        "training",
+        "formal_shard_integrity",
+        "calibration",
+        "primary_monitor_evaluation",
+        "artifacts",
+        "gates",
+    )
+    return {field: config.get(field) for field in fields}
+
+
+def validate_mixed_source_shard_set(
+    target_protocol_path: str | Path,
+    policy_manifest_path: str | Path,
+    *,
+    source_protocol_paths: Mapping[str, str | Path],
+    shard_paths: Mapping[str, Sequence[str | Path]],
+    partitions: Sequence[str] = FORMAL_PARTITIONS,
+) -> dict[str, Any]:
+    """Validate a relock whose partitions intentionally use old source files.
+
+    Each partition is checked against the protocol that produced its shards;
+    the target relock only supplies the scientific split declaration.  Source
+    protocol hashes, immutable contracts, exact seed coverage, and cross-
+    partition seed disjointness are all checked before a caller may train or
+    calibrate a monitor.
+    """
+    target_file = Path(target_protocol_path).resolve()
+    policy_file = Path(policy_manifest_path).resolve()
+    requested = tuple(str(partition) for partition in partitions)
+    errors: list[str] = []
+    report: dict[str, Any] = {
+        "gate_version": f"{GATE_VERSION}+mixed-source-v1",
+        "status": "blocked",
+        "passed": False,
+        "target_protocol": {"path": str(target_file)},
+        "policy_manifest": {"path": str(policy_file)},
+        "partitions": {},
+        "sources": {},
+        "cross_partition": {"seed_overlap": {}},
+        "errors": errors,
+    }
+    if (
+        not requested
+        or len(set(requested)) != len(requested)
+        or any(partition not in FORMAL_PARTITIONS for partition in requested)
+    ):
+        errors.append("mixed-source gate received an invalid partition selection")
+        return report
+    required_partitions = set(requested)
+    if set(source_protocol_paths) != required_partitions:
+        errors.append("source_protocol_paths keys must match the requested partitions")
+    if set(shard_paths) != required_partitions:
+        errors.append("shard_paths keys must match the requested partitions")
+    if errors:
+        return report
+    try:
+        target = _load_json(target_file)
+        _load_json(policy_file)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        errors.append(f"cannot load mixed-source gate configuration: {error}")
+        return report
+    target_errors = validate_monitor_protocol(target)
+    if target_errors:
+        errors.extend(f"invalid target monitor protocol: {error}" for error in target_errors)
+        return report
+    target_hash = sha256_file(target_file)
+    report["target_protocol"]["sha256"] = target_hash
+    if target.get("relock_version") != "1.3":
+        errors.append("mixed-source gate requires a v1.3 target relock protocol")
+    else:
+        parent_reference = target.get("parent_monitor_protocol")
+        if not isinstance(parent_reference, str) or not parent_reference:
+            errors.append("v1.3 target relock parent protocol is missing")
+        else:
+            parent_file = _resolve_protocol_reference(
+                parent_reference, relative_to=target_file.parents[1]
+            )
+            if not parent_file.is_file():
+                errors.append(f"v1.3 target relock parent protocol is missing: {parent_reference}")
+            else:
+                try:
+                    parent_config = _load_json(parent_file)
+                    parent_hash = sha256_file(parent_file)
+                except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                    errors.append(f"cannot load v1.3 target relock parent: {error}")
+                else:
+                    relock_errors = validate_monitor_relock_protocol(
+                        target, parent_config=parent_config, parent_sha256=parent_hash
+                    )
+                    if relock_errors:
+                        errors.extend(
+                            f"invalid target monitor relock: {error}"
+                            for error in relock_errors
+                        )
+                    report["target_protocol"]["parent_path"] = str(parent_file)
+                    report["target_protocol"]["parent_sha256"] = parent_hash
+
+    source_configs: dict[str, dict[str, Any]] = {}
+    source_contracts: dict[str, dict[str, Any]] = {}
+    source_seed_sets: dict[str, set[int]] = {}
+    for partition in requested:
+        declared = str(source_protocol_paths[partition])
+        if partition == "validation" and declared == "self":
+            source_file = target_file
+        else:
+            source_file = _resolve_protocol_reference(
+                declared, relative_to=target_file.parents[1]
+            )
+        source_record: dict[str, Any] = {
+            "declared_path": declared,
+            "path": str(source_file),
+        }
+        if not source_file.is_file():
+            errors.append(f"source protocol for {partition} is missing: {declared}")
+            report["sources"][partition] = source_record
+            continue
+        try:
+            source_config = _load_json(source_file)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+            errors.append(f"cannot load source protocol for {partition}: {error}")
+            report["sources"][partition] = source_record
+            continue
+        source_hash = sha256_file(source_file)
+        source_record["sha256"] = source_hash
+        report["sources"][partition] = source_record
+        source_configs[partition] = source_config
+        source_contracts[partition] = _protocol_contract(source_config)
+        if partition == "validation" and source_file != target_file:
+            errors.append("validation source must resolve to the target protocol via self")
+        declaration = target.get("source_protocols", {}).get(partition, {})
+        if not isinstance(declaration, Mapping):
+            errors.append(f"target source_protocols.{partition} is missing")
+        else:
+            declared_target_path = str(declaration.get("path", ""))
+            if declared_target_path != declared:
+                errors.append(
+                    f"target source_protocols.{partition}.path mismatch: "
+                    f"expected={declared!r}, got={declared_target_path!r}"
+                )
+            if partition != "validation" and declaration.get("sha256") != source_hash:
+                errors.append(
+                    f"target source_protocols.{partition}.sha256 does not match source file"
+                )
+            if partition == "validation" and declared != "self":
+                errors.append("target validation source declaration must be self")
+    if source_contracts:
+        baseline_partition = (
+            "validation"
+            if "validation" in source_contracts
+            else next(iter(source_contracts))
+        )
+        baseline_contract = source_contracts[baseline_partition]
+        for partition, contract in source_contracts.items():
+            if contract != baseline_contract:
+                differing = [
+                    field
+                    for field in baseline_contract
+                    if contract.get(field) != baseline_contract.get(field)
+                ]
+                errors.append(
+                    f"source protocol contract differs for {partition}: {differing}"
+                )
+
+    for partition in requested:
+        source_file = report["sources"].get(partition, {}).get("path")
+        if not source_file or partition not in source_configs:
+            continue
+        gate = validate_formal_shard_set(
+            source_file,
+            policy_file,
+            partition=partition,
+            shard_paths=shard_paths[partition],
+        )
+        report["partitions"][partition] = gate
+        if not gate.get("passed"):
+            errors.append(format_gate_failure(gate))
+        seeds = {
+            int(seed)
+            for shard in gate.get("shards", [])
+            for seed in shard.get("seeds", [])
+        }
+        source_seed_sets[partition] = seeds
+
+    for index, first in enumerate(requested):
+        for second in requested[index + 1 :]:
+            overlap = sorted(
+                source_seed_sets.get(first, set())
+                & source_seed_sets.get(second, set())
+            )
+            report["cross_partition"]["seed_overlap"][f"{first}:{second}"] = overlap
+            if overlap:
+                errors.append(f"scene seeds overlap between {first} and {second}: {overlap}")
+    report["cross_partition"]["seed_sets"] = {
+        partition: sorted(seeds) for partition, seeds in source_seed_sets.items()
+    }
+    report["status"] = "passed" if not errors else "blocked"
+    report["passed"] = not errors
+    return report
+
+
 def format_gate_failure(report: Mapping[str, Any], *, maximum_errors: int = 12) -> str:
     errors = [str(error) for error in report.get("errors", [])]
     shown = errors[:maximum_errors]

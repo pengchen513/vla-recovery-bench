@@ -21,7 +21,10 @@ from vla_recovery_bench.diagnostic_probe import (
 )
 from vla_recovery_bench.monitor import FaultConditionedTemporalMonitor, monitor_sha256
 from vla_recovery_bench.monitor_dataset import load_monitor_dataset
-from vla_recovery_bench.monitor_gate import validate_formal_shard_set
+from vla_recovery_bench.monitor_gate import (
+    validate_formal_shard_set,
+    validate_mixed_source_shard_set,
+)
 from vla_recovery_bench.monitor_protocol import (
     validate_monitor_relock_protocol,
     validate_probe_protocol,
@@ -85,7 +88,7 @@ def _rate_report(successes: int, total: int, *, steps: int) -> dict[str, Any]:
 
 
 def _validate_relock(protocol_path: Path, protocol: dict[str, Any]) -> dict[str, Any] | None:
-    """Validate v1.2 metadata and return parent provenance when applicable."""
+    """Validate relock metadata and return parent provenance when applicable."""
     if protocol.get("relock_version") is None:
         return None
     reference = Path(str(protocol.get("parent_monitor_protocol", "")))
@@ -107,6 +110,57 @@ def _validate_relock(protocol_path: Path, protocol: dict[str, Any]) -> dict[str,
     if errors:
         raise ValueError(f"invalid monitor relock protocol: {errors}")
     return {"path": str(parent_path), "sha256": parent_hash}
+
+
+def _resolve_protocol_reference(reference: str, *, protocol_path: Path) -> Path:
+    candidate = Path(reference)
+    candidates = (
+        candidate,
+        protocol_path.parents[1] / candidate,
+        protocol_path.parent / candidate,
+    )
+    for path in candidates:
+        if path.is_file():
+            return path.resolve()
+    return (protocol_path.parents[1] / candidate).resolve()
+
+
+def _resolve_lock_sources(
+    *,
+    protocol_path: Path,
+    protocol: dict[str, Any],
+    calibration_protocol: Path | None,
+    validation_protocol: Path | None,
+) -> tuple[dict[str, str], dict[str, Path]]:
+    """Resolve source protocols and reject paths that drift from v1.3 metadata."""
+    if protocol.get("relock_version") != "1.3":
+        target = protocol_path.resolve()
+        return (
+            {"calibration": str(target), "validation": str(target)},
+            {"calibration": target, "validation": target},
+        )
+    declarations = protocol.get("source_protocols", {})
+    options = {"calibration": calibration_protocol, "validation": validation_protocol}
+    declared: dict[str, str] = {}
+    resolved: dict[str, Path] = {}
+    for partition, option in options.items():
+        path_decl = str(declarations.get(partition, {}).get("path", ""))
+        if not path_decl:
+            raise ValueError(f"v1.3 source_protocols.{partition}.path is missing")
+        expected = (
+            protocol_path.resolve()
+            if path_decl == "self"
+            else _resolve_protocol_reference(path_decl, protocol_path=protocol_path)
+        )
+        actual = expected if option is None else option.resolve()
+        if actual != expected:
+            raise ValueError(
+                f"{partition} protocol does not match v1.3 declaration: "
+                f"expected={expected}, got={actual}"
+            )
+        declared[partition] = path_decl
+        resolved[partition] = actual
+    return declared, resolved
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -167,6 +221,8 @@ def lock_threshold(
     calibration_dirs: list[Path],
     validation_dirs: list[Path],
     output: Path,
+    calibration_protocol_path: Path | None = None,
+    validation_protocol_path: Path | None = None,
 ) -> dict[str, Any]:
     protocol = _load_json(protocol_path)
     probe = _load_json(probe_path)
@@ -180,18 +236,44 @@ def lock_threshold(
     if not calibration_dirs or not validation_dirs:
         raise ValueError("calibration and validation shard directories are required")
 
-    calibration_gate = validate_formal_shard_set(
-        protocol_path,
-        manifest_path,
-        partition="calibration",
-        shard_paths=calibration_dirs,
+    declared_sources, resolved_sources = _resolve_lock_sources(
+        protocol_path=protocol_path,
+        protocol=protocol,
+        calibration_protocol=calibration_protocol_path,
+        validation_protocol=validation_protocol_path,
     )
-    validation_gate = validate_formal_shard_set(
-        protocol_path,
-        manifest_path,
-        partition="validation",
-        shard_paths=validation_dirs,
-    )
+    if protocol.get("relock_version") == "1.3":
+        mixed_gate = validate_mixed_source_shard_set(
+            protocol_path,
+            manifest_path,
+            source_protocol_paths=declared_sources,
+            shard_paths={
+                "calibration": calibration_dirs,
+                "validation": validation_dirs,
+            },
+            partitions=("calibration", "validation"),
+        )
+        calibration_gate = mixed_gate["partitions"].get("calibration", {})
+        validation_gate = mixed_gate["partitions"].get("validation", {})
+        if not mixed_gate["passed"]:
+            raise ValueError(
+                "mixed-source formal shard gate failed before entropy lock: "
+                + "\n".join(f"- {error}" for error in mixed_gate["errors"][:20])
+            )
+    else:
+        mixed_gate = None
+        calibration_gate = validate_formal_shard_set(
+            resolved_sources["calibration"],
+            manifest_path,
+            partition="calibration",
+            shard_paths=calibration_dirs,
+        )
+        validation_gate = validate_formal_shard_set(
+            resolved_sources["validation"],
+            manifest_path,
+            partition="validation",
+            shard_paths=validation_dirs,
+        )
     if not calibration_gate["passed"] or not validation_gate["passed"]:
         raise ValueError(
             "formal shard gate failed before entropy lock: "
@@ -272,6 +354,15 @@ def lock_threshold(
         },
         "calibration_gate": calibration_gate,
         "validation_gate": validation_gate,
+        "source_protocols": {
+            partition: {
+                "path": str(path),
+                "sha256": _sha256(path),
+                "declared_path": declared_sources[partition],
+            }
+            for partition, path in resolved_sources.items()
+        },
+        "mixed_source_gate": mixed_gate,
         "calibration": {**lock, "episode_summaries": calibration},
         "validation": {
             "clean_episode_count": len(validation),
@@ -289,6 +380,7 @@ def lock_threshold(
             "confidence_interval": protocol.get("relock_decisions", {}).get(
                 "validation_confidence_interval"
             ),
+            "monitor_retraining": protocol.get("monitor_retraining"),
         },
         "rate_reports": {
             "calibration_joint_trigger": _rate_report(
@@ -346,6 +438,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--monitor", type=Path, default=DEFAULT_MONITOR)
     parser.add_argument("--monitor-metrics", type=Path, default=DEFAULT_MONITOR_METRICS)
+    parser.add_argument("--calibration-protocol", type=Path, default=None)
+    parser.add_argument("--validation-protocol", type=Path, default=None)
     parser.add_argument("--calibration-data", type=Path, nargs="+", required=True)
     parser.add_argument("--validation-data", type=Path, nargs="+", required=True)
     parser.add_argument(
@@ -368,6 +462,8 @@ def main() -> int:
             calibration_dirs=args.calibration_data,
             validation_dirs=args.validation_data,
             output=args.output,
+            calibration_protocol_path=args.calibration_protocol,
+            validation_protocol_path=args.validation_protocol,
         )
     except Exception as error:
         # Preserve a machine-readable explanation of a blocked lock.  The
@@ -386,6 +482,16 @@ def main() -> int:
             "monitor_metrics": str(args.monitor_metrics.resolve()),
             "calibration_shards": [str(path.resolve()) for path in args.calibration_data],
             "validation_shards": [str(path.resolve()) for path in args.validation_data],
+            "calibration_protocol": (
+                str(args.calibration_protocol.resolve())
+                if args.calibration_protocol is not None
+                else None
+            ),
+            "validation_protocol": (
+                str(args.validation_protocol.resolve())
+                if args.validation_protocol is not None
+                else None
+            ),
             "next_action": (
                 "recalibrate or revise the pre-registered entropy lock after scientific review; "
                 "do not run the diagnostic probe until a status=locked artifact exists"

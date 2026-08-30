@@ -32,6 +32,7 @@ from vla_recovery_bench.monitor_dataset import MonitorDatasetEpisode, load_monit
 from vla_recovery_bench.monitor_gate import (
     format_gate_failure,
     validate_formal_shard_set,
+    validate_mixed_source_shard_set,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +57,9 @@ def _sha256(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-def _dataset_provenance(directory: Path) -> dict[str, Any]:
+def _dataset_provenance(
+    directory: Path, *, source_protocol_path: Path | None = None
+) -> dict[str, Any]:
     validation = _load_json(directory / "artifact_validation.json")
     if validation.get("status") != "passed":
         raise ValueError(f"source dataset did not pass artifact validation: {directory}")
@@ -65,7 +68,7 @@ def _dataset_provenance(directory: Path) -> dict[str, Any]:
     after = _load_json(directory / "policy_state_after.json")
     if before.get("current_parameter_sha256") != after.get("current_parameter_sha256"):
         raise ValueError(f"source dataset changed the frozen policy: {directory}")
-    return {
+    provenance = {
         "path": str(directory.resolve()),
         "partition": metrics.get("partition"),
         "debug": metrics.get("debug"),
@@ -77,6 +80,12 @@ def _dataset_provenance(directory: Path) -> dict[str, Any]:
         "shard_integrity_sha256": _sha256(directory / "shard_integrity.json"),
         "policy_parameter_sha256": before.get("current_parameter_sha256"),
     }
+    if source_protocol_path is not None:
+        provenance["source_protocol"] = {
+            "path": str(source_protocol_path.resolve()),
+            "sha256": _sha256(source_protocol_path),
+        }
+    return provenance
 
 
 def _training_arrays(
@@ -98,7 +107,10 @@ def _training_arrays(
 
 
 def _load_sources(
-    directories: list[Path], *, expected_partition: str
+    directories: list[Path],
+    *,
+    expected_partition: str,
+    source_protocol_path: Path | None = None,
 ) -> tuple[list[MonitorDatasetEpisode], list[dict[str, Any]]]:
     if not directories:
         raise ValueError(f"at least one {expected_partition} dataset is required")
@@ -111,7 +123,9 @@ def _load_sources(
         episodes.extend(
             load_monitor_dataset(directory, expected_partition=expected_partition)
         )
-        provenance.append(_dataset_provenance(directory))
+        provenance.append(
+            _dataset_provenance(directory, source_protocol_path=source_protocol_path)
+        )
     tokens = [episode.token for episode in episodes]
     if len(tokens) != len(set(tokens)):
         raise ValueError(f"duplicate episode token across {expected_partition} shards")
@@ -272,6 +286,24 @@ def evaluate_monitor(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL)
+    parser.add_argument(
+        "--train-protocol",
+        type=Path,
+        default=None,
+        help="protocol that produced train shards (required for v1.3 relock when explicit)",
+    )
+    parser.add_argument(
+        "--calibration-protocol",
+        type=Path,
+        default=None,
+        help="protocol that produced calibration shards (required for v1.3 relock when explicit)",
+    )
+    parser.add_argument(
+        "--validation-protocol",
+        type=Path,
+        default=None,
+        help="protocol that produced validation shards (required for v1.3 relock when explicit)",
+    )
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--train-data", type=Path, nargs="+", required=True)
     parser.add_argument("--calibration-data", type=Path, nargs="+", required=True)
@@ -283,6 +315,59 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _resolve_protocol_reference(reference: str, *, protocol_path: Path) -> Path:
+    candidate = Path(reference)
+    candidates = (
+        candidate,
+        protocol_path.parents[1] / candidate,
+        protocol_path.parent / candidate,
+    )
+    for path in candidates:
+        if path.is_file():
+            return path.resolve()
+    return (protocol_path.parents[1] / candidate).resolve()
+
+
+def _source_protocols(
+    args: argparse.Namespace, *, protocol_path: Path, protocol: dict[str, Any]
+) -> tuple[dict[str, str], dict[str, Path]]:
+    """Resolve and verify v1.3's declared source protocol files."""
+    if protocol.get("relock_version") != "1.3":
+        target = str(protocol_path.resolve())
+        return (
+            {partition: target for partition in ("train", "calibration", "validation")},
+            {
+                partition: protocol_path.resolve()
+                for partition in ("train", "calibration", "validation")
+            },
+        )
+    options = {
+        "train": args.train_protocol,
+        "calibration": args.calibration_protocol,
+        "validation": args.validation_protocol,
+    }
+    declarations = protocol.get("source_protocols", {})
+    declared_paths: dict[str, str] = {}
+    resolved_paths: dict[str, Path] = {}
+    for partition, option in options.items():
+        declaration = declarations.get(partition, {})
+        declared = str(declaration.get("path", ""))
+        if not declared:
+            raise ValueError(f"v1.3 source_protocols.{partition}.path is missing")
+        expected = protocol_path.resolve() if declared == "self" else _resolve_protocol_reference(
+            declared, protocol_path=protocol_path
+        )
+        actual = expected if option is None else option.resolve()
+        if actual != expected:
+            raise ValueError(
+                f"{partition} protocol does not match v1.3 declaration: "
+                f"expected={expected}, got={actual}"
+            )
+        declared_paths[partition] = declared
+        resolved_paths[partition] = actual
+    return declared_paths, resolved_paths
+
+
 def main() -> int:
     args = parse_args()
     all_directories = [*args.train_data, *args.calibration_data, *args.validation_data]
@@ -291,26 +376,48 @@ def main() -> int:
             "train, calibration, and validation dataset directories must be distinct"
         )
     protocol = _load_json(args.protocol)
-    formal_gate_reports = {
-        "train": validate_formal_shard_set(
+    declared_source_protocols, resolved_source_protocols = _source_protocols(
+        args, protocol_path=args.protocol, protocol=protocol
+    )
+    if protocol.get("relock_version") == "1.3":
+        mixed_gate = validate_mixed_source_shard_set(
             args.protocol,
             args.manifest,
-            partition="train",
-            shard_paths=args.train_data,
-        ),
-        "calibration": validate_formal_shard_set(
-            args.protocol,
-            args.manifest,
-            partition="calibration",
-            shard_paths=args.calibration_data,
-        ),
-        "validation": validate_formal_shard_set(
-            args.protocol,
-            args.manifest,
-            partition="validation",
-            shard_paths=args.validation_data,
-        ),
-    }
+            source_protocol_paths=declared_source_protocols,
+            shard_paths={
+                "train": args.train_data,
+                "calibration": args.calibration_data,
+                "validation": args.validation_data,
+            },
+        )
+        formal_gate_reports = mixed_gate["partitions"]
+        if not mixed_gate["passed"]:
+            raise ValueError(
+                "mixed-source formal shard gate failed:\n"
+                + "\n".join(f"- {error}" for error in mixed_gate["errors"][:20])
+            )
+        formal_gate_reports = {**formal_gate_reports, "mixed_source": mixed_gate}
+    else:
+        formal_gate_reports = {
+            "train": validate_formal_shard_set(
+                args.protocol,
+                args.manifest,
+                partition="train",
+                shard_paths=args.train_data,
+            ),
+            "calibration": validate_formal_shard_set(
+                args.protocol,
+                args.manifest,
+                partition="calibration",
+                shard_paths=args.calibration_data,
+            ),
+            "validation": validate_formal_shard_set(
+                args.protocol,
+                args.manifest,
+                partition="validation",
+                shard_paths=args.validation_data,
+            ),
+        }
     blocked = [
         format_gate_failure(report)
         for report in formal_gate_reports.values()
@@ -319,13 +426,19 @@ def main() -> int:
     if blocked:
         raise ValueError("\n\n".join(blocked))
     train, train_provenance = _load_sources(
-        args.train_data, expected_partition="train"
+        args.train_data,
+        expected_partition="train",
+        source_protocol_path=resolved_source_protocols["train"],
     )
     calibration, calibration_provenance = _load_sources(
-        args.calibration_data, expected_partition="calibration"
+        args.calibration_data,
+        expected_partition="calibration",
+        source_protocol_path=resolved_source_protocols["calibration"],
     )
     validation, validation_provenance = _load_sources(
-        args.validation_data, expected_partition="validation"
+        args.validation_data,
+        expected_partition="validation",
+        source_protocol_path=resolved_source_protocols["validation"],
     )
     train_seeds = {episode.seed for episode in train}
     calibration_seeds = {episode.seed for episode in calibration}
@@ -342,6 +455,24 @@ def main() -> int:
         raise ValueError(
             "pilot or final-test seeds entered monitor training/calibration/validation"
         )
+
+    if protocol.get("relock_version") == "1.3":
+        retraining = protocol.get("monitor_retraining", {})
+        fixed = {
+            "epochs": int(retraining.get("epochs", -1)),
+            "learning_rate": float(retraining.get("learning_rate", float("nan"))),
+            "l2": float(retraining.get("l2", float("nan"))),
+        }
+        requested = {
+            "epochs": args.epochs,
+            "learning_rate": args.learning_rate,
+            "l2": args.l2,
+        }
+        if requested != fixed:
+            raise ValueError(
+                "v1.3 monitor retraining hyperparameters are locked: "
+                f"expected={fixed}, got={requested}"
+            )
 
     output = ensure_empty_output_dir(args.output)
     checkpoint_path = output / "monitor.npz"
@@ -420,7 +551,15 @@ def main() -> int:
         "calibration": calibration_report,
         "held_out_validation": held_out,
         "sources": source_provenance,
+        "source_protocols": {
+            partition: {
+                "path": str(path),
+                "sha256": _sha256(path),
+            }
+            for partition, path in resolved_source_protocols.items()
+        },
         "formal_shard_integrity_gate": formal_gate_reports,
+        "monitor_retraining": protocol.get("monitor_retraining"),
         "gate": {
             "status": "passed" if gate_passed else "blocked",
             "passed": gate_passed,
@@ -454,7 +593,15 @@ def main() -> int:
             "monitor": metrics["model"],
             "calibration": calibration_report,
             "sources": source_provenance,
+            "source_protocols": {
+                partition: {
+                    "path": str(path),
+                    "sha256": _sha256(path),
+                }
+                for partition, path in resolved_source_protocols.items()
+            },
             "formal_shard_integrity_gate": formal_gate_reports,
+            "monitor_retraining": protocol.get("monitor_retraining"),
             "protocol": {"path": str(args.protocol.resolve()), "sha256": _sha256(args.protocol)},
             "command": [sys.executable, *sys.argv],
         },

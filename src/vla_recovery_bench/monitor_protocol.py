@@ -46,6 +46,17 @@ REQUIRED_FORBIDDEN_INPUTS = {
 RELOCK_VERSION = "1.2"
 RELOCK_CALIBRATION_SEEDS = tuple(range(1000, 1050))
 RELOCK_VALIDATION_SEEDS = tuple(range(1100, 1150))
+RELOCK_V13_VERSION = "1.3"
+RELOCK_V13_CALIBRATION_SEEDS = tuple(range(1000, 1050))
+RELOCK_V13_VALIDATION_SEEDS = tuple(range(1150, 1200))
+RELOCK_V13_TRAIN_PROTOCOL = "configs/monitor_training_v1_0.json"
+RELOCK_V13_CALIBRATION_PROTOCOL = "configs/monitor_relock_v1_2.json"
+RELOCK_V13_TRAIN_PROTOCOL_SHA256 = (
+    "aae40b48329956bb25baec5592fdade3b0bdc8842120a8c77b3b598a6dbaa684"
+)
+RELOCK_V13_CALIBRATION_PROTOCOL_SHA256 = (
+    "35d38a628d3e4d7d954af37d74f15af12a2001273e30651b218338b6283c1849"
+)
 RELOCK_METADATA_KEYS = {
     "relock_version",
     "parent_monitor_protocol",
@@ -53,6 +64,18 @@ RELOCK_METADATA_KEYS = {
     "relock_reason",
     "relock_status",
     "relock_decisions",
+}
+RELOCK_V13_METADATA_KEYS = {
+    "relock_version",
+    "parent_monitor_protocol",
+    "parent_monitor_protocol_sha256",
+    "relock_reason",
+    "relock_status",
+    "relock_decisions",
+    "supersedes_protocol",
+    "supersedes_protocol_sha256",
+    "source_protocols",
+    "monitor_retraining",
 }
 
 
@@ -165,7 +188,7 @@ def validate_monitor_protocol(config: Mapping[str, Any]) -> list[str]:
     return errors
 
 
-def validate_monitor_relock_protocol(
+def _validate_monitor_relock_v12(
     config: Mapping[str, Any],
     *,
     parent_config: Mapping[str, Any] | None = None,
@@ -185,6 +208,11 @@ def validate_monitor_relock_protocol(
     parent_reference = config.get("parent_monitor_protocol")
     if not isinstance(parent_reference, str) or not parent_reference:
         errors.append("monitor relock must declare parent_monitor_protocol")
+    elif parent_reference != RELOCK_V13_TRAIN_PROTOCOL:
+        errors.append(
+            "v1.3 parent_monitor_protocol must be "
+            f"{RELOCK_V13_TRAIN_PROTOCOL}"
+        )
     declared_parent_hash = config.get("parent_monitor_protocol_sha256")
     if not isinstance(declared_parent_hash, str) or len(declared_parent_hash) != 64:
         errors.append("monitor relock must declare a 64-character parent SHA256")
@@ -194,6 +222,12 @@ def validate_monitor_relock_protocol(
         errors.append(
             "monitor relock parent SHA256 does not match the supplied parent protocol"
         )
+    if (
+        isinstance(declared_parent_hash, str)
+        and len(declared_parent_hash) == 64
+        and declared_parent_hash != RELOCK_V13_TRAIN_PROTOCOL_SHA256
+    ):
+        errors.append("v1.3 parent SHA256 does not match the approved parent source")
 
     splits = config.get("splits", {})
     calibration = tuple(int(seed) for seed in splits.get("calibration_scene_seeds", ()))
@@ -238,6 +272,185 @@ def validate_monitor_relock_protocol(
                 errors.append(
                     "v1.2 relock changed fields beyond calibration/validation seeds or metadata"
                 )
+    return errors
+
+
+def _validate_monitor_relock_v13(
+    config: Mapping[str, Any],
+    *,
+    parent_config: Mapping[str, Any] | None = None,
+    parent_sha256: str | None = None,
+) -> list[str]:
+    """Validate the v1.3 monitor retraining and fresh-holdout envelope.
+
+    v1.3 deliberately permits a new monitor checkpoint, but only after the
+    training source, calibration source, and fresh validation source are
+    declared.  The feature schema, policy contract, information boundary, and
+    clean episode budget remain inherited from the v1.0 protocol.
+    """
+    errors = validate_monitor_protocol(config)
+    if config.get("relock_version") != RELOCK_V13_VERSION:
+        errors.append(f"monitor relock_version must be {RELOCK_V13_VERSION}")
+
+    parent_reference = config.get("parent_monitor_protocol")
+    if not isinstance(parent_reference, str) or not parent_reference:
+        errors.append("monitor relock must declare parent_monitor_protocol")
+    declared_parent_hash = config.get("parent_monitor_protocol_sha256")
+    if not isinstance(declared_parent_hash, str) or len(declared_parent_hash) != 64:
+        errors.append("monitor relock must declare a 64-character parent SHA256")
+    elif any(character not in "0123456789abcdef" for character in declared_parent_hash):
+        errors.append("monitor relock parent SHA256 must be lowercase hexadecimal")
+    if parent_sha256 is not None and declared_parent_hash != parent_sha256:
+        errors.append(
+            "monitor relock parent SHA256 does not match the supplied parent protocol"
+        )
+
+    supersedes = config.get("supersedes_protocol")
+    if not isinstance(supersedes, str) or not supersedes:
+        errors.append("v1.3 relock must declare the superseded protocol")
+    elif supersedes != RELOCK_V13_CALIBRATION_PROTOCOL:
+        errors.append(
+            "v1.3 supersedes_protocol must be "
+            f"{RELOCK_V13_CALIBRATION_PROTOCOL}"
+        )
+    supersedes_hash = config.get("supersedes_protocol_sha256")
+    if not isinstance(supersedes_hash, str) or len(supersedes_hash) != 64:
+        errors.append("v1.3 relock must declare a 64-character superseded SHA256")
+    elif any(character not in "0123456789abcdef" for character in supersedes_hash):
+        errors.append("v1.3 superseded SHA256 must be lowercase hexadecimal")
+    elif supersedes_hash != RELOCK_V13_CALIBRATION_PROTOCOL_SHA256:
+        errors.append("v1.3 superseded SHA256 does not match the approved source")
+
+    splits = config.get("splits", {})
+    calibration = tuple(int(seed) for seed in splits.get("calibration_scene_seeds", ()))
+    validation = tuple(int(seed) for seed in splits.get("validation_scene_seeds", ()))
+    if calibration != RELOCK_V13_CALIBRATION_SEEDS:
+        errors.append("v1.3 calibration seeds must be exactly 1000 through 1049")
+    if validation != RELOCK_V13_VALIDATION_SEEDS:
+        errors.append("v1.3 validation seeds must be exactly 1150 through 1199")
+
+    decisions = config.get("relock_decisions", {})
+    expected_decisions = {
+        "threshold_rule": "retain_v1.1_risk_or_entropy_union_rule",
+        "validation_point_gate": "joint_trigger_rate <= 0.05",
+        "validation_confidence_interval": "clopper_pearson_95_percent_report_only",
+        "calibration_seed_range": [1000, 1049],
+        "validation_seed_range": [1150, 1199],
+        "contaminated_validation_seed_range": [1100, 1149],
+        "old_failed_artifacts_retained": True,
+        "write_once_output_paths": True,
+        "monitor_checkpoint_unchanged": False,
+        "monitor_retraining": "train_source_only_then_calibrate_clean_calibration_only",
+        "fresh_validation_required": True,
+        "clean_budget_definition": "any_alarm_in_no_injected_fault_episode",
+    }
+    if decisions != expected_decisions:
+        errors.append("relock_decisions drifted from the approved v1.3 decisions")
+
+    retraining = config.get("monitor_retraining")
+    expected_retraining = {
+        "enabled": True,
+        "architecture_unchanged": True,
+        "weights_source": "train_source_only",
+        "threshold_source": "clean_calibration_source_only",
+        "epochs": 80,
+        "learning_rate": 0.08,
+        "l2": 1e-4,
+        "random_seed": 14042026,
+        "policy_parameters_in_model": False,
+    }
+    if retraining != expected_retraining:
+        errors.append("monitor_retraining drifted from the approved v1.3 settings")
+
+    sources = config.get("source_protocols")
+    if not isinstance(sources, Mapping) or set(sources) != {"train", "calibration", "validation"}:
+        errors.append("v1.3 source_protocols must declare train, calibration, and validation")
+    else:
+        for partition in ("train", "calibration", "validation"):
+            source = sources.get(partition)
+            if not isinstance(source, Mapping):
+                errors.append(f"v1.3 source_protocols.{partition} must be an object")
+                continue
+            path = source.get("path")
+            if not isinstance(path, str) or not path:
+                errors.append(f"v1.3 source_protocols.{partition}.path is required")
+            if partition == "validation":
+                if path != "self":
+                    errors.append("v1.3 validation source_protocols path must be self")
+            else:
+                expected_path = (
+                    RELOCK_V13_TRAIN_PROTOCOL
+                    if partition == "train"
+                    else RELOCK_V13_CALIBRATION_PROTOCOL
+                )
+                if path != expected_path:
+                    errors.append(
+                        f"v1.3 source_protocols.{partition}.path must be {expected_path}"
+                    )
+                source_hash = source.get("sha256")
+                if not isinstance(source_hash, str) or len(source_hash) != 64:
+                    errors.append(
+                        f"v1.3 source_protocols.{partition}.sha256 must be 64 hex characters"
+                    )
+                elif any(character not in "0123456789abcdef" for character in source_hash):
+                    errors.append(
+                        f"v1.3 source_protocols.{partition}.sha256 must be lowercase hexadecimal"
+                    )
+                else:
+                    expected_hash = (
+                        RELOCK_V13_TRAIN_PROTOCOL_SHA256
+                        if partition == "train"
+                        else RELOCK_V13_CALIBRATION_PROTOCOL_SHA256
+                    )
+                    if source_hash != expected_hash:
+                        errors.append(
+                            f"v1.3 source_protocols.{partition}.sha256 does not match "
+                            "the approved source"
+                        )
+
+    if parent_config is not None:
+        parent_errors = validate_monitor_protocol(parent_config)
+        if parent_errors:
+            errors.extend(f"invalid parent monitor protocol: {error}" for error in parent_errors)
+        else:
+            candidate = deepcopy(dict(config))
+            baseline = deepcopy(dict(parent_config))
+            for key in RELOCK_V13_METADATA_KEYS:
+                candidate.pop(key, None)
+            candidate_splits = candidate.get("splits", {})
+            baseline_splits = baseline.get("splits", {})
+            candidate_splits["calibration_scene_seeds"] = baseline_splits.get(
+                "calibration_scene_seeds"
+            )
+            candidate_splits["validation_scene_seeds"] = baseline_splits.get(
+                "validation_scene_seeds"
+            )
+            if candidate != baseline:
+                errors.append(
+                    "v1.3 relock changed fields beyond calibration/validation seeds "
+                    "and declared retraining metadata"
+                )
+    return errors
+
+
+def validate_monitor_relock_protocol(
+    config: Mapping[str, Any],
+    *,
+    parent_config: Mapping[str, Any] | None = None,
+    parent_sha256: str | None = None,
+) -> list[str]:
+    """Dispatch validation for the supported versioned relock envelopes."""
+    version = str(config.get("relock_version", ""))
+    if version == RELOCK_VERSION:
+        return _validate_monitor_relock_v12(
+            config, parent_config=parent_config, parent_sha256=parent_sha256
+        )
+    if version == RELOCK_V13_VERSION:
+        return _validate_monitor_relock_v13(
+            config, parent_config=parent_config, parent_sha256=parent_sha256
+        )
+    errors = validate_monitor_protocol(config)
+    errors.append(f"unsupported monitor relock_version: {version!r}")
     return errors
 
 

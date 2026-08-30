@@ -659,8 +659,11 @@ def _validate_lock(
         if str(lock.get("protocol", {}).get("sha256")) != _sha256(protocol_path):
             raise ValueError("probe lock monitor protocol SHA256 does not match protocol")
         protocol = _load_json(protocol_path)
-        if protocol.get("relock_version") != "1.2":
-            raise ValueError("diagnostic probe requires a v1.2 monitor relock protocol")
+        relock_version = str(protocol.get("relock_version", ""))
+        if relock_version not in {"1.2", "1.3"}:
+            raise ValueError(
+                "diagnostic probe requires a supported v1.2 or v1.3 monitor relock protocol"
+            )
         reference = Path(str(protocol.get("parent_monitor_protocol", "")))
         candidates = [
             protocol_path.parent / reference,
@@ -680,8 +683,10 @@ def _validate_lock(
         )
         if relock_errors:
             raise ValueError(f"invalid monitor relock protocol: {relock_errors}")
-        if lock.get("relock", {}).get("version") != "1.2":
-            raise ValueError("probe lock does not record relock version 1.2")
+        if lock.get("relock", {}).get("version") != relock_version:
+            raise ValueError(
+                "probe lock relock version does not match the monitor protocol"
+            )
     if str(lock.get("monitor", {}).get("sha256")) != _sha256(monitor_path):
         raise ValueError("probe lock monitor SHA256 does not match checkpoint")
     if str(lock.get("probe_protocol", {}).get("sha256")) != _sha256(probe_path):
@@ -712,7 +717,7 @@ def _validate_lock(
             "clopper_pearson_95_percent"
         )
         if not isinstance(interval, Mapping):
-            raise ValueError("v1.2 probe lock is missing its confidence interval report")
+            raise ValueError("probe lock is missing its confidence interval report")
         for bound in ("lower", "upper"):
             if not np.isfinite(float(interval.get(bound, np.nan))):
                 raise ValueError("probe lock confidence interval is not finite")

@@ -29,6 +29,7 @@ MONITOR_PATH = ROOT / "configs/monitor_training_v1_0.json"
 PROBE_PATH = ROOT / "configs/diagnostic_probe_v1_0.json"
 PROBE_V11_PATH = ROOT / "configs/diagnostic_probe_v1_1.json"
 MONITOR_RELOCK_PATH = ROOT / "configs/monitor_relock_v1_2.json"
+MONITOR_RELOCK_V13_PATH = ROOT / "configs/monitor_relock_v1_3.json"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -46,13 +47,15 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_relock(relock: dict[str, Any]) -> list[str]:
+def validate_relock(
+    relock: dict[str, Any], *, relock_path: Path = MONITOR_RELOCK_PATH
+) -> list[str]:
     """Validate the relock and its explicitly named parent protocol."""
     reference = relock.get("parent_monitor_protocol")
     if not isinstance(reference, str) or not reference:
         return validate_monitor_relock_protocol(relock)
     candidates = [
-        (MONITOR_RELOCK_PATH.parent / reference).resolve(),
+        (relock_path.parent / reference).resolve(),
         (ROOT / reference).resolve(),
         Path(reference).resolve(),
     ]
@@ -232,7 +235,12 @@ def validate_all() -> list[str]:
     errors.extend(validate_power(_load(POWER_PATH)))
     errors.extend(validate_intervention(_load(INTERVENTION_PATH)))
     errors.extend(validate_monitor_protocol(monitor))
-    errors.extend(validate_relock(_load(MONITOR_RELOCK_PATH)))
+    errors.extend(validate_relock(_load(MONITOR_RELOCK_PATH), relock_path=MONITOR_RELOCK_PATH))
+    errors.extend(
+        validate_relock(
+            _load(MONITOR_RELOCK_V13_PATH), relock_path=MONITOR_RELOCK_V13_PATH
+        )
+    )
     errors.extend(validate_probe_protocol(probe, monitor))
     errors.extend(validate_probe_protocol(probe_v11, monitor))
     return errors
@@ -255,6 +263,7 @@ def main() -> int:
             str(PROBE_PATH),
             str(PROBE_V11_PATH),
             str(MONITOR_RELOCK_PATH),
+            str(MONITOR_RELOCK_V13_PATH),
         ],
         "errors": errors,
     }

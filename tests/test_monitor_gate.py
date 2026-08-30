@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import h5py
 import numpy as np
@@ -16,12 +17,14 @@ from vla_recovery_bench.monitor_gate import (
     episode_token,
     sha256_file,
     validate_formal_shard_set,
+    validate_mixed_source_shard_set,
 )
 from vla_recovery_bench.monitor_protocol import CONDITIONS, monitor_episode_plan
 from vla_recovery_bench.recording import to_jsonable
 
 ROOT = Path(__file__).parents[1]
 PROTOCOL_PATH = ROOT / "configs/monitor_training_v1_0.json"
+RELOCK_V13_PATH = ROOT / "configs/monitor_relock_v1_3.json"
 POLICY_PATH = ROOT / "configs/policies/groot_n1_5_robocasa_atomic_seen_30p.json"
 
 
@@ -400,6 +403,75 @@ class MonitorFormalShardGateTest(unittest.TestCase):
                 any("invalid monitor dataset" in error for error in report["errors"]),
                 report["errors"],
             )
+
+    def test_mixed_source_gate_checks_source_contracts_and_seed_overlap(self) -> None:
+        source_protocols = {
+            "train": "configs/monitor_training_v1_0.json",
+            "calibration": "configs/monitor_relock_v1_2.json",
+            "validation": "self",
+        }
+
+        def fake_gate(
+            protocol_path: str | Path,
+            policy_path: str | Path,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            del policy_path
+            partition = str(kwargs["partition"])
+            seed = {"train": 600, "calibration": 1000, "validation": 1150}[partition]
+            return {
+                "passed": True,
+                "status": "passed",
+                "partition": partition,
+                "shards": [{"seeds": [seed], "provenance_fingerprint": "same"}],
+            }
+
+        with patch(
+            "vla_recovery_bench.monitor_gate.validate_formal_shard_set",
+            side_effect=fake_gate,
+        ):
+            report = validate_mixed_source_shard_set(
+                RELOCK_V13_PATH,
+                POLICY_PATH,
+                source_protocol_paths=source_protocols,
+                shard_paths={
+                    "train": ["train"],
+                    "calibration": ["calibration"],
+                    "validation": ["validation"],
+                },
+            )
+        self.assertTrue(report["passed"], report["errors"])
+
+        def overlapping_gate(
+            protocol_path: str | Path,
+            policy_path: str | Path,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            del protocol_path, policy_path
+            partition = str(kwargs["partition"])
+            return {
+                "passed": True,
+                "status": "passed",
+                "partition": partition,
+                "shards": [{"seeds": [600], "provenance_fingerprint": "same"}],
+            }
+
+        with patch(
+            "vla_recovery_bench.monitor_gate.validate_formal_shard_set",
+            side_effect=overlapping_gate,
+        ):
+            report = validate_mixed_source_shard_set(
+                RELOCK_V13_PATH,
+                POLICY_PATH,
+                source_protocol_paths=source_protocols,
+                shard_paths={
+                    "train": ["train"],
+                    "calibration": ["calibration"],
+                    "validation": ["validation"],
+                },
+            )
+        self.assertFalse(report["passed"])
+        self.assertTrue(any("overlap" in error for error in report["errors"]))
 
 
 if __name__ == "__main__":
